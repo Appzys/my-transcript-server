@@ -5,13 +5,11 @@ from youtube_transcript_api.proxies import WebshareProxyConfig
 
 app = FastAPI()
 
-# Load credentials from environment variables
+# Correct environment key names
 proxy = WebshareProxyConfig(
     proxy_username=os.getenv("appzysrc@gmail.com"),
-    proxy_password=os.getenv("Appzys@2025"),
-)
+    proxy_password=os.getenv("Appzys@2025"),)
 
-# Test video
 TEST_VIDEO_ID = "KLe7Rxkrj94"
 
 
@@ -23,11 +21,15 @@ def home():
 @app.get("/transcript")
 def get_transcript(video_id: str = TEST_VIDEO_ID):
     try:
-        ytt = YouTubeTranscriptApi(proxy_config=proxy)
-        transcript = ytt.get_transcript(video_id)
+        transcript = YouTubeTranscriptApi.get_transcript(
+            video_id,
+            proxy_config=proxy
+        )
+
         return {
             "video_id": video_id,
             "transcript": transcript
         }
+
     except Exception as e:
         return {"error": str(e)}
