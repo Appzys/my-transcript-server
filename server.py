@@ -29,6 +29,7 @@ HEADERS = {
     "User-Agent": "com.google.android.youtube/19.08.35 (Linux; Android 13)"
 }
 
+
 def get_proxy():
     ip = random.choice(PROXIES)
     return {
@@ -37,9 +38,9 @@ def get_proxy():
     }
 
 
-# -----------------
-# CORE LOGIC
-# -----------------
+# =========================
+#  CORE REVERSE ENGINEERING
+# =========================
 def fetch_subtitles(video_id: str, preferred_lang: str | None = None, use_proxy=False):
     proxy = get_proxy() if use_proxy else None
 
@@ -81,26 +82,18 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None, use_proxy=
 
     tracks = player_json["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
 
-    # --------------------------
-    # 🎯 PRIORITY SELECTION LOGIC
-    # --------------------------
-
+    # -------- Language Matching -------
     selected = None
 
-    # 1️⃣ Match preferred language
     if preferred_lang:
-        selected = next((t for t in tracks 
-                         if t.get("languageCode") == preferred_lang and not t.get("kind")), None)
+        selected = next((t for t in tracks if t.get("languageCode") == preferred_lang and not t.get("kind")), None)
 
-    # 2️⃣ Pick ORIGINAL subtitles (not auto-generated)
     if selected is None:
         selected = next((t for t in tracks if not t.get("kind")), None)
 
-    # 3️⃣ Pick AUTO subtitles (ASR)
     if selected is None:
         selected = next((t for t in tracks if t.get("kind")), None)
 
-    # 4️⃣ Pick first available fallback
     if selected is None and len(tracks) > 0:
         selected = tracks[0]
 
@@ -120,7 +113,7 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None, use_proxy=
     subs = []
     format_used = "text"
 
-    # OLD FORMAT
+    # ---- OLD format (English style) ----
     for node in root.iter("text"):
         subs.append({
             "text": (node.text or "").replace("\n", " ").strip(),
@@ -129,28 +122,26 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None, use_proxy=
             "lang": lang
         })
 
-    # NEW SRV3 FORMAT
-   # SRV3 Format (supports Tamil/Hindi/Korean)
-if len(subs) == 0:
-    format_used = "srv3"
-    for node in root.iter("p"):
+    # ---- NEW SRV3 format for Tamil/Hindi/Korean ----
+    if len(subs) == 0:
+        format_used = "srv3"
 
-        # Collect text from <s> nodes (fallback to raw text)
-        text_parts = []
-        for s in node.iter("s"):
-            if s.text:
-                text_parts.append(s.text.strip())
+        for node in root.iter("p"):
 
-        # If no <s> children, use the direct p-text
-        text_value = " ".join(text_parts).strip() if text_parts else (node.text or "").strip()
+            # Join nested text from <s> tags
+            chunks = []
+            for s in node.iter("s"):
+                if s.text:
+                    chunks.append(s.text.strip())
 
-        subs.append({
-            "text": text_value,
-            "start": float(node.attrib.get("t", 0)) / 1000,
-            "duration": float(node.attrib.get("d", 0)) / 1000,
-            "lang": lang
-        })
+            text_value = " ".join(chunks) if chunks else (node.text or "").strip()
 
+            subs.append({
+                "text": text_value,
+                "start": float(node.attrib.get("t", 0)) / 1000,
+                "duration": float(node.attrib.get("d", 0)) / 1000,
+                "lang": lang
+            })
 
     return {
         "success": True,
@@ -161,15 +152,14 @@ if len(subs) == 0:
     }
 
 
-
-# -----------------
-# ROUTE
-# -----------------
+# ===========
+#  API ROUTE
+# ===========
 @app.get("/transcript")
 def transcript(video_id: str):
     log.info(f"🎬 Request → {video_id}")
 
-    # 1️⃣ Try direct first
+    # 1️⃣ Direct first
     try:
         result = fetch_subtitles(video_id, use_proxy=False)
         if result.get("success"):
