@@ -130,15 +130,27 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None, use_proxy=
         })
 
     # NEW SRV3 FORMAT
-    if len(subs) == 0:
-        format_used = "srv3"
-        for node in root.iter("p"):
-            subs.append({
-                "text": (node.text or "").replace("\n", " ").strip(),
-                "start": float(node.attrib.get("t", 0)) / 1000,
-                "duration": float(node.attrib.get("d", 0)) / 1000,
-                "lang": lang
-            })
+   # SRV3 Format (supports Tamil/Hindi/Korean)
+if len(subs) == 0:
+    format_used = "srv3"
+    for node in root.iter("p"):
+
+        # Collect text from <s> nodes (fallback to raw text)
+        text_parts = []
+        for s in node.iter("s"):
+            if s.text:
+                text_parts.append(s.text.strip())
+
+        # If no <s> children, use the direct p-text
+        text_value = " ".join(text_parts).strip() if text_parts else (node.text or "").strip()
+
+        subs.append({
+            "text": text_value,
+            "start": float(node.attrib.get("t", 0)) / 1000,
+            "duration": float(node.attrib.get("d", 0)) / 1000,
+            "lang": lang
+        })
+
 
     return {
         "success": True,
