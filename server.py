@@ -1,13 +1,11 @@
-import time
 import random
 import traceback
 import logging
+import requests
 from fastapi import FastAPI
-from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
-from youtube_transcript_api.proxies import GenericProxyConfig
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("yt-proxy")
+log = logging.getLogger("yt-rev")
 
 app = FastAPI()
 
@@ -27,73 +25,134 @@ PROXIES = [
     "142.111.67.146:5611",
 ]
 
-def random_proxy_pair():
-    """
-    Build HTTP/HTTPS proxy URLs for GenericProxyConfig.
-    """
+
+def get_proxy():
     ip = random.choice(PROXIES)
-    http_url = f"http://{USERNAME}:{PASSWORD}@{ip}"
-    https_url = f"http://{USERNAME}:{PASSWORD}@{ip}"  # library will tunnel HTTPS through HTTP proxy
-    return http_url, https_url
+    p = {
+        "http": f"http://{USERNAME}:{PASSWORD}@{ip}",
+        "https": f"http://{USERNAME}:{PASSWORD}@{ip}"
+    }
+    log.info(f"🔁 Using proxy: {p['http']}")
+    return p
+
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Android 13; Pixel 7)",
+}
 
 
 @app.get("/")
 def home():
-    return {"status": "Online", "proxy_count": len(PROXIES)}
+    return {"status": "running", "proxies": len(PROXIES)}
 
 
 @app.get("/transcript")
-def transcript(video_id: str):
-    logger.info(f"🎬 Transcript request for {video_id}")
+def get_transcript(video_id: str):
 
     for attempt in range(1, 6):
         try:
-            http_url, https_url = random_proxy_pair()
-            logger.info(f"🔄 Proxy attempt {attempt}: http={http_url}, https={https_url}")
+            proxy = get_proxy()
 
-            # Configure youtube-transcript-api with GenericProxyConfig
-            proxy_config = GenericProxyConfig(
-                http_url=http_url,
-                https_url=https_url,
-            )
+            # 1️⃣ Fetch the YouTube HTML to extract Innertube API key
+            log.info(f"🌐 Fetching watch page for {video_id}...")
+            html = requests.get(
+                f"https://www.youtube.com/watch?v={video_id}",
+                headers=HEADERS,
+                proxies=proxy,
+                timeout=15
+            ).text
 
-            # Instance-based API with proxy
-            yt = YouTubeTranscriptApi(proxy_config=proxy_config)
+            api_key_match = '"INNERTUBE_API_KEY":"(.*?)"'
+            import re
+            key = re.search(api_key_match, html)
 
-            # 1) Get list of available transcripts (instance method: list)
-            transcript_list = yt.list(video_id)
+            if not key:
+                raise Exception("No INNERTUBE_API_KEY found")
 
-            # 2) Prefer English manual, else auto-generated
-            try:
-                chosen = transcript_list.find_manually_created_transcript(["en"])
-            except Exception:
-                chosen = transcript_list.find_generated_transcript(["en"])
+            api_key = key.group(1)
 
-            # 3) Fetch actual captions from chosen transcript
-            data = chosen.fetch()
-            logger.info(f"📄 SUCCESS — {len(data)} items")
+            log.info(f"🔑 Extracted API key: {api_key}")
+
+            # 2️⃣ Call Internal YouTube Player API
+            data = {
+                "videoId": video_id,
+                "context": {
+                    "client": {
+                        "clientName": "ANDROID",
+                        "clientVersion": "19.08.35",
+                        "androidSdkVersion": 33,
+                        "deviceMake": "Google",
+                        "deviceModel": "Pixel 7 Pro",
+                        "osName": "Android",
+                        "osVersion": "13"
+                    }
+                }
+            }
+
+            url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={api_key}&prettyPrint=false"
+
+            log.info("📡 Calling YouTube internal API...")
+
+            r = requests.post(
+                url,
+                json=data,
+                headers=HEADERS,
+                proxies=proxy,
+                timeout=15
+            ).json()
+
+            if "captions" not in r:
+                return {"success": False, "error": "No subtitles available"}
+
+            tracks = r["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
+            selected = tracks[0]  # choose best first match
+            subtitle_url = selected["baseUrl"]
+
+            lang = selected.get("languageCode", "unknown")
+            log.info(f"🌍 Subtitle Language: {lang}")
+            log.info(f"📄 Subtitle URL: {subtitle_url}")
+
+            # 3️⃣ Download subtitles XML
+            xml = requests.get(subtitle_url, proxies=proxy, timeout=15).text
+
+            # 4️⃣ Parse XML subtitles
+            import xml.etree.ElementTree as ET
+
+            root = ET.fromstring(xml)
+            subtitles = []
+
+            for node in root.iter("text"):
+                subtitles.append({
+                    "text": node.text.replace("\n", " ") if node.text else "",
+                    "start": float(node.attrib.get("start", "0")),
+                    "duration": float(node.attrib.get("dur", "0")),
+                    "lang": lang
+                })
+
+            if len(subtitles) == 0:
+                for node in root.iter("p"):
+                    subtitles.append({
+                        "text": node.text.replace("\n", " ") if node.text else "",
+                        "start": float(node.attrib.get("t", "0")) / 1000,
+                        "duration": float(node.attrib.get("d", "0")) / 1000,
+                        "lang": lang
+                    })
+
+            log.info(f"✅ Extracted {len(subtitles)} subtitles")
 
             return {
                 "success": True,
                 "video_id": video_id,
-                "items": len(data),
-                "preview": data[:3],
-                "proxy_used": {
-                    "http": http_url,
-                    "https": https_url,
-                },
+                "language": lang,
+                "count": len(subtitles),
+                "preview": subtitles[:5],
+                "proxy_used": proxy["http"],
                 "attempt": attempt,
+                "subtitles": subtitles
             }
 
-        except NoTranscriptFound:
-            return {"success": False, "error": "No transcript exists for this video"}
-
-        except TranscriptsDisabled:
-            return {"success": False, "error": "Captions are disabled for this video"}
-
         except Exception as e:
-            logger.warning(f"⚠️ Proxy failed ({attempt}): {e}")
-            logger.debug(traceback.format_exc())
-            time.sleep(1)
+            log.warning(f"⚠️ Attempt {attempt} failed: {e}")
+            log.warning(traceback.format_exc())
 
-    return {"success": False, "error": "All proxies failed"}
+    return {"success": False, "error": "All proxy attempts failed"}
