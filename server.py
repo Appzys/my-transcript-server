@@ -17,8 +17,8 @@ def debug_state():
 
 # ---- Proxy configuration using proper environment variables ----
 proxy = WebshareProxyConfig(
-    proxy_username=os.getenv("appzysrc@gmail.com"),
-    proxy_password=os.getenv("Appzys@2025"),
+    proxy_username=os.getenv("txqylbdv"),
+    proxy_password=os.getenv("qx2kyqif5zmk"),
 )
 
 TEST_VIDEO_ID = "KLe7Rxkrj94"
