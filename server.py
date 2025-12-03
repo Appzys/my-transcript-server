@@ -6,21 +6,20 @@ from youtube_transcript_api.proxies import WebshareProxyConfig
 
 app = FastAPI()
 
-
 # ---- DEBUG: Print environment and config status ----
 def debug_state():
     return {
         "WS_USERNAME_SET": os.getenv("WS_USERNAME") is not None,
         "WS_PASSWORD_SET": os.getenv("WS_PASSWORD") is not None,
-        "username_value_preview": os.getenv("WS_USERNAME")[:3] + "***" if os.getenv("WS_USERNAME") else None,
+        "username_value_preview": (os.getenv("WS_USERNAME")[:3] + "***") if os.getenv("WS_USERNAME") else None,
         "proxy_mode": "enabled" if os.getenv("WS_USERNAME") and os.getenv("WS_PASSWORD") else "disabled"
     }
 
-
-# ---- Proxy configuration using environment variables ----
+# ---- Proxy configuration using proper environment variables ----
 proxy = WebshareProxyConfig(
     proxy_username=os.getenv("appzysrc@gmail.com"),
-    proxy_password=os.getenv("Appzys@2025"),))
+    proxy_password=os.getenv("Appzys@2025"),
+)
 
 TEST_VIDEO_ID = "KLe7Rxkrj94"
 
@@ -41,21 +40,20 @@ def get_transcript(video_id: str = TEST_VIDEO_ID):
     }
 
     try:
-        # Correct usage: static method call
         transcript = YouTubeTranscriptApi.get_transcript(
-            video_id, 
+            video_id,
             proxy_config=proxy
         )
 
         debug_output["success"] = True
         debug_output["transcript_length"] = len(transcript)
+        debug_output["transcript_preview"] = transcript[:3]  # show first 3 entries
 
         return debug_output
 
     except Exception as e:
-        error_details = {
+        return {
             "error": str(e),
             "traceback": traceback.format_exc(),
             "debug_state": debug_state(),
         }
-        return error_details
