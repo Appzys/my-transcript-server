@@ -40,11 +40,8 @@ def get_proxy():
 # -----------------
 # CORE LOGIC
 # -----------------
-def fetch_subtitles(video_id: str, use_proxy=False):
+def fetch_subtitles(video_id: str, preferred_lang: str | None = None, use_proxy=False):
     proxy = get_proxy() if use_proxy else None
-
-    # 1) Watch Page
-    log.info(f"{'🧱 Using Proxy' if proxy else '⚡ Direct Request'} → Watch Page Fetch")
 
     resp = requests.get(
         f"https://www.youtube.com/watch?v={video_id}",
@@ -55,16 +52,13 @@ def fetch_subtitles(video_id: str, use_proxy=False):
 
     html = resp.text
 
-    # Extract API KEY
     import re
     key_match = re.search(r'"INNERTUBE_API_KEY":"(.*?)"', html)
     if not key_match:
-        raise Exception("Cannot extract Innertube key")
+        raise Exception("Cannot extract innertube key")
 
     api_key = key_match.group(1)
-    log.info(f"🔑 API Key: {api_key}")
 
-    # 2) Internal API Request
     payload = {
         "videoId": video_id,
         "context": {
@@ -76,16 +70,10 @@ def fetch_subtitles(video_id: str, use_proxy=False):
         }
     }
 
-    api_url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={api_key}&prettyPrint=false"
-
-    log.info("📡 Calling YouTube Player API...")
+    url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={api_key}&prettyPrint=false"
 
     player_json = requests.post(
-        api_url,
-        json=payload,
-        headers=HEADERS,
-        proxies=proxy,
-        timeout=15
+        url, json=payload, headers=HEADERS, proxies=proxy, timeout=15
     ).json()
 
     if "captions" not in player_json:
@@ -93,10 +81,28 @@ def fetch_subtitles(video_id: str, use_proxy=False):
 
     tracks = player_json["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
 
-    # Select best track: manual > auto > first
-    selected = next((t for t in tracks if not t.get("kind")), None)
+    # --------------------------
+    # 🎯 PRIORITY SELECTION LOGIC
+    # --------------------------
+
+    selected = None
+
+    # 1️⃣ Match preferred language
+    if preferred_lang:
+        selected = next((t for t in tracks 
+                         if t.get("languageCode") == preferred_lang and not t.get("kind")), None)
+
+    # 2️⃣ Pick ORIGINAL subtitles (not auto-generated)
+    if selected is None:
+        selected = next((t for t in tracks if not t.get("kind")), None)
+
+    # 3️⃣ Pick AUTO subtitles (ASR)
     if selected is None:
         selected = next((t for t in tracks if t.get("kind")), None)
+
+    # 4️⃣ Pick first available fallback
+    if selected is None and len(tracks) > 0:
+        selected = tracks[0]
 
     if selected is None:
         return {"error": "NO_TRACKS"}
@@ -104,32 +110,28 @@ def fetch_subtitles(video_id: str, use_proxy=False):
     track_url = selected["baseUrl"]
     lang = selected.get("languageCode", "unknown")
 
-    log.info(f"🌍 Language Selected: {lang}")
-    log.info(f"📄 Sub URL: {track_url}")
-
-    # 3) Download XML
     xml = requests.get(track_url, headers=HEADERS, proxies=proxy, timeout=15).text
 
-    # 4) Parse XML
     import xml.etree.ElementTree as ET
     root = ET.fromstring(xml)
 
-    result = []
+    subs = []
     format_used = "text"
 
+    # OLD FORMAT
     for node in root.iter("text"):
-        result.append({
+        subs.append({
             "text": (node.text or "").replace("\n", " ").strip(),
             "start": float(node.attrib.get("start", 0)),
             "duration": float(node.attrib.get("dur", 0)),
             "lang": lang
         })
 
-    # New YouTube format SRV3
-    if len(result) == 0:
+    # NEW SRV3 FORMAT
+    if len(subs) == 0:
         format_used = "srv3"
         for node in root.iter("p"):
-            result.append({
+            subs.append({
                 "text": (node.text or "").replace("\n", " ").strip(),
                 "start": float(node.attrib.get("t", 0)) / 1000,
                 "duration": float(node.attrib.get("d", 0)) / 1000,
@@ -138,11 +140,12 @@ def fetch_subtitles(video_id: str, use_proxy=False):
 
     return {
         "success": True,
-        "count": len(result),
+        "count": len(subs),
         "lang": lang,
         "format": format_used,
-        "subtitles": result
+        "subtitles": subs
     }
+
 
 
 # -----------------
