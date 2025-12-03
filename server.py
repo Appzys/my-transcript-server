@@ -1,4 +1,3 @@
-import os
 import time
 import traceback
 import logging
@@ -11,10 +10,10 @@ logger = logging.getLogger("transcript-service")
 
 app = FastAPI()
 
-# ---- USE REAL CREDS DIRECTLY FOR NOW ----
+# ---- Webshare proxy (using your current cred values directly for now) ----
 proxy = WebshareProxyConfig(
     proxy_username="txqylbdv",
-    proxy_password="qx2kyqif5zmk"
+    proxy_password="qx2kyqif5zmk",
 )
 
 TEST_VIDEO_ID = "KLe7Rxkrj94"
@@ -39,14 +38,30 @@ def get_transcript(video_id: str = TEST_VIDEO_ID):
     logger.info(f"🎬 Getting transcript for: {video_id}")
 
     try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id, proxy_config=proxy)
-        logger.info(f"✅ SUCCESS: {len(transcript)} lines received")
+        # ✅ new API style: create instance + .fetch()
+        ytt_api = YouTubeTranscriptApi(proxy_config=proxy)
+        fetched = ytt_api.fetch(video_id)
+
+        # fetched is a FetchedTranscript object with .snippets list
+        snippets = fetched.snippets
+
+        logger.info(f"✅ SUCCESS: {len(snippets)} lines received")
+
+        # Convert snippets to simple list of dicts for Flutter
+        simple_snippets = [
+            {
+                "text": s.text,
+                "start": s.start,
+                "duration": s.duration,
+            }
+            for s in snippets
+        ]
 
         return {
             "success": True,
             "video_id": video_id,
-            "count": len(transcript),
-            "preview": transcript[:3]
+            "count": len(simple_snippets),
+            "preview": simple_snippets[:3],  # first 3 items
         }
 
     except Exception as e:
@@ -55,5 +70,5 @@ def get_transcript(video_id: str = TEST_VIDEO_ID):
         return {
             "success": False,
             "error": str(e),
-            "traceback": traceback.format_exc()
+            "traceback": traceback.format_exc(),
         }
