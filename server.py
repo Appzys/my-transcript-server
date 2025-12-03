@@ -25,134 +25,149 @@ PROXIES = [
     "142.111.67.146:5611",
 ]
 
+HEADERS = {
+    "User-Agent": "com.google.android.youtube/19.08.35 (Linux; Android 13)"
+}
 
 def get_proxy():
     ip = random.choice(PROXIES)
-    p = {
+    return {
         "http": f"http://{USERNAME}:{PASSWORD}@{ip}",
         "https": f"http://{USERNAME}:{PASSWORD}@{ip}"
     }
-    log.info(f"🔁 Using proxy: {p['http']}")
-    return p
 
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Android 13; Pixel 7)",
-}
+# -----------------
+# CORE LOGIC
+# -----------------
+def fetch_subtitles(video_id: str, use_proxy=False):
+    proxy = get_proxy() if use_proxy else None
+
+    # 1) Watch Page
+    log.info(f"{'🧱 Using Proxy' if proxy else '⚡ Direct Request'} → Watch Page Fetch")
+
+    resp = requests.get(
+        f"https://www.youtube.com/watch?v={video_id}",
+        headers=HEADERS,
+        proxies=proxy,
+        timeout=15
+    )
+
+    html = resp.text
+
+    # Extract API KEY
+    import re
+    key_match = re.search(r'"INNERTUBE_API_KEY":"(.*?)"', html)
+    if not key_match:
+        raise Exception("Cannot extract Innertube key")
+
+    api_key = key_match.group(1)
+    log.info(f"🔑 API Key: {api_key}")
+
+    # 2) Internal API Request
+    payload = {
+        "videoId": video_id,
+        "context": {
+            "client": {
+                "clientName": "ANDROID",
+                "clientVersion": "19.08.35",
+                "androidSdkVersion": 33
+            }
+        }
+    }
+
+    api_url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={api_key}&prettyPrint=false"
+
+    log.info("📡 Calling YouTube Player API...")
+
+    player_json = requests.post(
+        api_url,
+        json=payload,
+        headers=HEADERS,
+        proxies=proxy,
+        timeout=15
+    ).json()
+
+    if "captions" not in player_json:
+        return {"error": "NO_CAPTIONS"}
+
+    tracks = player_json["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
+
+    # Select best track: manual > auto > first
+    selected = next((t for t in tracks if not t.get("kind")), None)
+    if selected is None:
+        selected = next((t for t in tracks if t.get("kind")), None)
+
+    if selected is None:
+        return {"error": "NO_TRACKS"}
+
+    track_url = selected["baseUrl"]
+    lang = selected.get("languageCode", "unknown")
+
+    log.info(f"🌍 Language Selected: {lang}")
+    log.info(f"📄 Sub URL: {track_url}")
+
+    # 3) Download XML
+    xml = requests.get(track_url, headers=HEADERS, proxies=proxy, timeout=15).text
+
+    # 4) Parse XML
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(xml)
+
+    result = []
+    format_used = "text"
+
+    for node in root.iter("text"):
+        result.append({
+            "text": (node.text or "").replace("\n", " ").strip(),
+            "start": float(node.attrib.get("start", 0)),
+            "duration": float(node.attrib.get("dur", 0)),
+            "lang": lang
+        })
+
+    # New YouTube format SRV3
+    if len(result) == 0:
+        format_used = "srv3"
+        for node in root.iter("p"):
+            result.append({
+                "text": (node.text or "").replace("\n", " ").strip(),
+                "start": float(node.attrib.get("t", 0)) / 1000,
+                "duration": float(node.attrib.get("d", 0)) / 1000,
+                "lang": lang
+            })
+
+    return {
+        "success": True,
+        "count": len(result),
+        "lang": lang,
+        "format": format_used,
+        "subtitles": result
+    }
 
 
-@app.get("/")
-def home():
-    return {"status": "running", "proxies": len(PROXIES)}
-
-
+# -----------------
+# ROUTE
+# -----------------
 @app.get("/transcript")
-def get_transcript(video_id: str):
+def transcript(video_id: str):
+    log.info(f"🎬 Request → {video_id}")
 
+    # 1️⃣ Try direct first
+    try:
+        result = fetch_subtitles(video_id, use_proxy=False)
+        if result.get("success"):
+            return {**result, "mode": "DIRECT"}
+    except Exception as e:
+        log.warning(f"❌ Direct failed: {e}")
+
+    # 2️⃣ Retry with proxy
     for attempt in range(1, 6):
         try:
-            proxy = get_proxy()
-
-            # 1️⃣ Fetch the YouTube HTML to extract Innertube API key
-            log.info(f"🌐 Fetching watch page for {video_id}...")
-            html = requests.get(
-                f"https://www.youtube.com/watch?v={video_id}",
-                headers=HEADERS,
-                proxies=proxy,
-                timeout=15
-            ).text
-
-            api_key_match = '"INNERTUBE_API_KEY":"(.*?)"'
-            import re
-            key = re.search(api_key_match, html)
-
-            if not key:
-                raise Exception("No INNERTUBE_API_KEY found")
-
-            api_key = key.group(1)
-
-            log.info(f"🔑 Extracted API key: {api_key}")
-
-            # 2️⃣ Call Internal YouTube Player API
-            data = {
-                "videoId": video_id,
-                "context": {
-                    "client": {
-                        "clientName": "ANDROID",
-                        "clientVersion": "19.08.35",
-                        "androidSdkVersion": 33,
-                        "deviceMake": "Google",
-                        "deviceModel": "Pixel 7 Pro",
-                        "osName": "Android",
-                        "osVersion": "13"
-                    }
-                }
-            }
-
-            url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={api_key}&prettyPrint=false"
-
-            log.info("📡 Calling YouTube internal API...")
-
-            r = requests.post(
-                url,
-                json=data,
-                headers=HEADERS,
-                proxies=proxy,
-                timeout=15
-            ).json()
-
-            if "captions" not in r:
-                return {"success": False, "error": "No subtitles available"}
-
-            tracks = r["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
-            selected = tracks[0]  # choose best first match
-            subtitle_url = selected["baseUrl"]
-
-            lang = selected.get("languageCode", "unknown")
-            log.info(f"🌍 Subtitle Language: {lang}")
-            log.info(f"📄 Subtitle URL: {subtitle_url}")
-
-            # 3️⃣ Download subtitles XML
-            xml = requests.get(subtitle_url, proxies=proxy, timeout=15).text
-
-            # 4️⃣ Parse XML subtitles
-            import xml.etree.ElementTree as ET
-
-            root = ET.fromstring(xml)
-            subtitles = []
-
-            for node in root.iter("text"):
-                subtitles.append({
-                    "text": node.text.replace("\n", " ") if node.text else "",
-                    "start": float(node.attrib.get("start", "0")),
-                    "duration": float(node.attrib.get("dur", "0")),
-                    "lang": lang
-                })
-
-            if len(subtitles) == 0:
-                for node in root.iter("p"):
-                    subtitles.append({
-                        "text": node.text.replace("\n", " ") if node.text else "",
-                        "start": float(node.attrib.get("t", "0")) / 1000,
-                        "duration": float(node.attrib.get("d", "0")) / 1000,
-                        "lang": lang
-                    })
-
-            log.info(f"✅ Extracted {len(subtitles)} subtitles")
-
-            return {
-                "success": True,
-                "video_id": video_id,
-                "language": lang,
-                "count": len(subtitles),
-                "preview": subtitles[:5],
-                "proxy_used": proxy["http"],
-                "attempt": attempt,
-                "subtitles": subtitles
-            }
-
+            result = fetch_subtitles(video_id, use_proxy=True)
+            if result.get("success"):
+                return {**result, "mode": f"PROXY (attempt {attempt})"}
         except Exception as e:
-            log.warning(f"⚠️ Attempt {attempt} failed: {e}")
+            log.warning(f"⚠️ Proxy attempt {attempt} failed: {e}")
             log.warning(traceback.format_exc())
 
-    return {"success": False, "error": "All proxy attempts failed"}
+    return {"success": False, "error": "FAILED_ALL_ATTEMPTS"}
