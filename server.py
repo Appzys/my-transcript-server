@@ -110,6 +110,8 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None, use_proxy=
     track_url = selected["baseUrl"]
     lang = selected.get("languageCode", "unknown")
 
+    log.info(f"📄 Sub URL: {track_url}")
+
     xml = requests.get(track_url, headers=HEADERS, proxies=proxy, timeout=15).text
 
     import xml.etree.ElementTree as ET
