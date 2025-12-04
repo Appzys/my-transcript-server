@@ -44,6 +44,13 @@ def get_proxy():
 def fetch_subtitles(video_id: str, preferred_lang: str | None = None, use_proxy=False):
     proxy = get_proxy() if use_proxy else None
 
+    if use_proxy:
+        proxy = get_proxy()
+        log.warning(f"🧱 Using PROXY → {proxy['http']}")
+    else:
+        proxy = None
+        log.info("⚡ Using DIRECT connection (no proxy)")
+
     resp = requests.get(
         f"https://www.youtube.com/watch?v={video_id}",
         headers=HEADERS,
