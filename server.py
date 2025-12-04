@@ -28,6 +28,15 @@ PAYLOADS = [
             "client": {
                 "clientName": "ANDROID",
                 "clientVersion": "19.06.38",
+                "androidSdkVersion": 33
+            }
+        }
+    },
+    {
+        "context": {
+            "client": {
+                "clientName": "ANDROID",
+                "clientVersion": "19.06.38",
                 "androidSdkVersion": 32
             }
         }
@@ -36,8 +45,8 @@ PAYLOADS = [
         "context": {
             "client": {
                 "clientName": "ANDROID",
-                "clientVersion": "18.45.34",
-                "androidSdkVersion": 31
+                "clientVersion": "19.04.36",
+                "androidSdkVersion": 33
             }
         }
     },
@@ -45,8 +54,8 @@ PAYLOADS = [
         "context": {
             "client": {
                 "clientName": "ANDROID",
-                "clientVersion": "17.30.14",
-                "androidSdkVersion": 30
+                "clientVersion": "19.02.33",
+                "androidSdkVersion": 33
             }
         }
     },
@@ -54,53 +63,8 @@ PAYLOADS = [
         "context": {
             "client": {
                 "clientName": "ANDROID",
-                "clientVersion": "16.22.12",
-                "androidSdkVersion": 29
-            }
-        }
-    },
-    {
-        "context": {
-            "client": {
-                "clientName": "ANDROID",
-                "clientVersion": "15.18.10",
-                "androidSdkVersion": 28
-            }
-        }
-    },
-    {
-        "context": {
-            "client": {
-                "clientName": "ANDROID",
-                "clientVersion": "14.10.09",
-                "androidSdkVersion": 27
-            }
-        }
-    },
-    {
-        "context": {
-            "client": {
-                "clientName": "ANDROID",
-                "clientVersion": "13.05.08",
-                "androidSdkVersion": 26
-            }
-        }
-    },
-    {
-        "context": {
-            "client": {
-                "clientName": "ANDROID",
-                "clientVersion": "12.01.07",
-                "androidSdkVersion": 25
-            }
-        }
-    },
-    {
-        "context": {
-            "client": {
-                "clientName": "ANDROID",
-                "clientVersion": "11.40.06",
-                "androidSdkVersion": 24
+                "clientVersion": "18.49.43",
+                "androidSdkVersion": 32
             }
         }
     }
