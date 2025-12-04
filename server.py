@@ -12,6 +12,113 @@ HEADERS = {
     "User-Agent": "com.google.android.youtube/19.08.35 (Linux; Android 13)"
 }
 
+# ========= PAYLOAD ROTATION =========
+PAYLOADS = [
+    {
+        "context": {
+            "client": {
+                "clientName": "ANDROID",
+                "clientVersion": "19.08.35",
+                "androidSdkVersion": 33
+            }
+        }
+    },
+    {
+        "context": {
+            "client": {
+                "clientName": "ANDROID",
+                "clientVersion": "19.06.38",
+                "androidSdkVersion": 32
+            }
+        }
+    },
+    {
+        "context": {
+            "client": {
+                "clientName": "ANDROID",
+                "clientVersion": "18.45.34",
+                "androidSdkVersion": 31
+            }
+        }
+    },
+    {
+        "context": {
+            "client": {
+                "clientName": "ANDROID",
+                "clientVersion": "17.30.14",
+                "androidSdkVersion": 30
+            }
+        }
+    },
+    {
+        "context": {
+            "client": {
+                "clientName": "ANDROID",
+                "clientVersion": "16.22.12",
+                "androidSdkVersion": 29
+            }
+        }
+    },
+    {
+        "context": {
+            "client": {
+                "clientName": "ANDROID",
+                "clientVersion": "15.18.10",
+                "androidSdkVersion": 28
+            }
+        }
+    },
+    {
+        "context": {
+            "client": {
+                "clientName": "ANDROID",
+                "clientVersion": "14.10.09",
+                "androidSdkVersion": 27
+            }
+        }
+    },
+    {
+        "context": {
+            "client": {
+                "clientName": "ANDROID",
+                "clientVersion": "13.05.08",
+                "androidSdkVersion": 26
+            }
+        }
+    },
+    {
+        "context": {
+            "client": {
+                "clientName": "ANDROID",
+                "clientVersion": "12.01.07",
+                "androidSdkVersion": 25
+            }
+        }
+    },
+    {
+        "context": {
+            "client": {
+                "clientName": "ANDROID",
+                "clientVersion": "11.40.06",
+                "androidSdkVersion": 24
+            }
+        }
+    }
+]
+
+_current_payload_index = 0
+
+def get_next_payload(video_id: str):
+    global _current_payload_index
+
+    base_payload = PAYLOADS[_current_payload_index].copy()
+    base_payload["videoId"] = video_id
+
+    # rotate
+    _current_payload_index = (_current_payload_index + 1) % len(PAYLOADS)
+
+    return base_payload
+
 # =========================
 #  CORE REVERSE ENGINEERING
 # =========================
@@ -32,16 +139,8 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
 
     api_key = key_match.group(1)
 
-    payload = {
-        "videoId": video_id,
-        "context": {
-            "client": {
-                "clientName": "ANDROID",
-                "clientVersion": "19.08.35",
-                "androidSdkVersion": 33
-            }
-        }
-    }
+    # === CHANGED: payload now rotates ===
+    payload = get_next_payload(video_id)
 
     url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={api_key}&prettyPrint=false"
 
