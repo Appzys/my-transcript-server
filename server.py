@@ -1,7 +1,7 @@
 import traceback
 import logging
 import requests
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("yt-rev")
@@ -11,6 +11,9 @@ app = FastAPI()
 HEADERS = {
     "User-Agent": "com.google.android.youtube/19.08.35 (Linux; Android 13)"
 }
+
+
+API_KEY = "x9J2f8S2pA9W-qZvB"
 
 # ========= PAYLOAD ROTATION =========
 PAYLOADS = [
@@ -205,9 +208,14 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
 #  API ROUTE
 # ===========
 @app.get("/transcript")
-def transcript(video_id: str):
-    log.info(f"🎬 Request → {video_id}")
+def transcript(video_id: str, request: Request):
+    client_key = request.headers.get("X-API-KEY")
 
+    if client_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    log.info(f"🎬 Request → {video_id}")
+    
     try:
         result = fetch_subtitles(video_id)
         if result.get("success"):
