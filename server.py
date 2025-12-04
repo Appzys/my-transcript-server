@@ -166,14 +166,6 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None, use_proxy=
 def transcript(video_id: str):
     log.info(f"🎬 Request → {video_id}")
 
-    # 1️⃣ Direct first
-    try:
-        result = fetch_subtitles(video_id, use_proxy=False)
-        if result.get("success"):
-            return {**result, "mode": "DIRECT"}
-    except Exception as e:
-        log.warning(f"❌ Direct failed: {e}")
-
     # 2️⃣ Retry with proxy
     for attempt in range(1, 6):
         try:
