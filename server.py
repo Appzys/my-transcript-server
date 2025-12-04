@@ -9,52 +9,33 @@ log = logging.getLogger("yt-rev")
 
 app = FastAPI()
 
-USERNAME = "txqylbdv"
-PASSWORD = "qx2kyqif5zmk"
-
-PROXIES = [
-    "142.111.48.253:7030",
-    "31.59.20.176:6754",
-    "23.95.150.145:6114",
-    "198.23.239.134:6540",
-    "107.172.163.27:6543",
-    "198.105.121.200:6462",
-    "64.137.96.74:6641",
-    "84.247.60.125:6095",
-    "216.10.27.159:6837",
-    "142.111.67.146:5611",
+# 🧠 Rotating Android Device Profiles
+ANDROID_CLIENTS = [
+    {"clientName": "ANDROID", "clientVersion": "19.08.35", "androidSdkVersion": 33, "deviceModel": "Pixel 7 Pro"},
+    {"clientName": "ANDROID", "clientVersion": "18.41.38", "androidSdkVersion": 30, "deviceModel": "Samsung S21"},
+    {"clientName": "ANDROID", "clientVersion": "17.36.4",  "androidSdkVersion": 29, "deviceModel": "Redmi Note 10"},
+    {"clientName": "ANDROID", "clientVersion": "16.20.35",  "androidSdkVersion": 28, "deviceModel": "OnePlus 6T"},
+    {"clientName": "ANDROID", "clientVersion": "15.01.36",  "androidSdkVersion": 26, "deviceModel": "Vivo V9"},
 ]
+
 
 HEADERS = {
     "User-Agent": "com.google.android.youtube/19.08.35 (Linux; Android 13)"
 }
 
 
-def get_proxy():
-    ip = random.choice(PROXIES)
-    return {
-        "http": f"http://{USERNAME}:{PASSWORD}@{ip}",
-        "https": f"http://{USERNAME}:{PASSWORD}@{ip}"
-    }
-
-
 # =========================
-#  CORE REVERSE ENGINEERING
+#  CORE YT REVERSE ENGINEERING
 # =========================
-def fetch_subtitles(video_id: str, preferred_lang: str | None = None, use_proxy=False):
-    proxy = get_proxy() if use_proxy else None
+def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
 
-    if use_proxy:
-        proxy = get_proxy()
-        log.warning(f"🧱 Using PROXY → {proxy['http']}")
-    else:
-        proxy = None
-        log.info("⚡ Using DIRECT connection (no proxy)")
+    # pick random Android client
+    android_client = random.choice(ANDROID_CLIENTS)
+    log.info(f"📱 Using device profile: {android_client}")
 
     resp = requests.get(
         f"https://www.youtube.com/watch?v={video_id}",
         headers=HEADERS,
-        proxies=proxy,
         timeout=15
     )
 
@@ -63,25 +44,23 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None, use_proxy=
     import re
     key_match = re.search(r'"INNERTUBE_API_KEY":"(.*?)"', html)
     if not key_match:
-        raise Exception("Cannot extract innertube key")
+        raise Exception("❌ Cannot extract Innertube API key")
 
     api_key = key_match.group(1)
 
     payload = {
         "videoId": video_id,
         "context": {
-            "client": {
-                "clientName": "ANDROID",
-                "clientVersion": "19.08.35",
-                "androidSdkVersion": 33
-            }
+            "client": android_client
         }
     }
+
+    log.info(f"🔑 Using API key: {api_key}")
 
     url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={api_key}&prettyPrint=false"
 
     player_json = requests.post(
-        url, json=payload, headers=HEADERS, proxies=proxy, timeout=15
+        url, json=payload, headers=HEADERS, timeout=15
     ).json()
 
     if "captions" not in player_json:
@@ -89,7 +68,6 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None, use_proxy=
 
     tracks = player_json["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
 
-    # -------- Language Matching -------
     selected = None
 
     if preferred_lang:
@@ -110,9 +88,10 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None, use_proxy=
     track_url = selected["baseUrl"]
     lang = selected.get("languageCode", "unknown")
 
-    log.info(f"📄 Sub URL: {track_url}")
+    log.info(f"🌍 Subtitle Language: {lang}")
+    log.info(f"📄 Subtitle URL: {track_url}")
 
-    xml = requests.get(track_url, headers=HEADERS, proxies=proxy, timeout=15).text
+    xml = requests.get(track_url, headers=HEADERS, timeout=15).text
 
     import xml.etree.ElementTree as ET
     root = ET.fromstring(xml)
@@ -120,7 +99,7 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None, use_proxy=
     subs = []
     format_used = "text"
 
-    # ---- OLD format (English style) ----
+    # ---- OLD format ----
     for node in root.iter("text"):
         subs.append({
             "text": (node.text or "").replace("\n", " ").strip(),
@@ -129,17 +108,12 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None, use_proxy=
             "lang": lang
         })
 
-    # ---- NEW SRV3 format for Tamil/Hindi/Korean ----
+    # ---- SRV3 (Tamil/Hindi/Korean supports <s> tags) ----
     if len(subs) == 0:
         format_used = "srv3"
 
         for node in root.iter("p"):
-
-            # Join nested text from <s> tags
-            chunks = []
-            for s in node.iter("s"):
-                if s.text:
-                    chunks.append(s.text.strip())
+            chunks = [s.text.strip() for s in node.iter("s") if s.text]
 
             text_value = " ".join(chunks) if chunks else (node.text or "").strip()
 
@@ -153,6 +127,7 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None, use_proxy=
     return {
         "success": True,
         "count": len(subs),
+        "device_used": android_client,  # 👈 add for transparency
         "lang": lang,
         "format": format_used,
         "subtitles": subs
@@ -166,14 +141,13 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None, use_proxy=
 def transcript(video_id: str):
     log.info(f"🎬 Request → {video_id}")
 
-    # 2️⃣ Retry with proxy
-    for attempt in range(1, 6):
-        try:
-            result = fetch_subtitles(video_id, use_proxy=True)
-            if result.get("success"):
-                return {**result, "mode": f"PROXY (attempt {attempt})"}
-        except Exception as e:
-            log.warning(f"⚠️ Proxy attempt {attempt} failed: {e}")
-            log.warning(traceback.format_exc())
+    try:
+        result = fetch_subtitles(video_id)
+        if result.get("success"):
+            log.info(f"✅ SUCCESS — {result['count']} lines")
+            return {**result, "mode": "DIRECT (NO-PROXY)"}
+    except Exception as e:
+        log.warning(f"❌ Error: {e}")
+        log.warning(traceback.format_exc())
 
-    return {"success": False, "error": "FAILED_ALL_ATTEMPTS"}
+    return {"success": False, "error": "FAILED"}
