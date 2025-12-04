@@ -11,12 +11,53 @@ app = FastAPI()
 
 # 🧠 Rotating Android Device Profiles
 ANDROID_CLIENTS = [
-    {"clientName": "ANDROID", "clientVersion": "19.08.35", "androidSdkVersion": 33, "deviceModel": "Pixel 7 Pro"},
-    {"clientName": "ANDROID", "clientVersion": "18.41.38", "androidSdkVersion": 30, "deviceModel": "Samsung S21"},
-    {"clientName": "ANDROID", "clientVersion": "17.36.4",  "androidSdkVersion": 29, "deviceModel": "Redmi Note 10"},
-    {"clientName": "ANDROID", "clientVersion": "16.20.35",  "androidSdkVersion": 28, "deviceModel": "OnePlus 6T"},
-    {"clientName": "ANDROID", "clientVersion": "15.01.36",  "androidSdkVersion": 26, "deviceModel": "Vivo V9"},
+    {
+        "clientName": "ANDROID",
+        "clientVersion": "19.08.35",
+        "androidSdkVersion": 33,
+        "clientScreen": "WATCH",
+        "clientFormFactor": "SMALL",
+        "hl": "en",
+        "deviceModel": "Pixel 7 Pro"
+    },
+    {
+        "clientName": "ANDROID",
+        "clientVersion": "18.41.38",
+        "androidSdkVersion": 30,
+        "clientScreen": "WATCH",
+        "clientFormFactor": "SMALL",
+        "hl": "en",
+        "deviceModel": "Samsung S21"
+    },
+    {
+        "clientName": "ANDROID",
+        "clientVersion": "17.36.4",
+        "androidSdkVersion": 29,
+        "clientScreen": "WATCH",
+        "clientFormFactor": "SMALL",
+        "hl": "en",
+        "deviceModel": "Redmi Note 10"
+    },
+    {
+        "clientName": "ANDROID",
+        "clientVersion": "16.20.35",
+        "androidSdkVersion": 28,
+        "clientScreen": "WATCH",
+        "clientFormFactor": "SMALL",
+        "hl": "en",
+        "deviceModel": "OnePlus 6T"
+    },
+    {
+        "clientName": "ANDROID",
+        "clientVersion": "15.01.36",
+        "androidSdkVersion": 26,
+        "clientScreen": "WATCH",
+        "clientFormFactor": "SMALL",
+        "hl": "en",
+        "deviceModel": "Vivo V9"
+    },
 ]
+
 
 
 HEADERS = {
@@ -48,12 +89,15 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
 
     api_key = key_match.group(1)
 
-    payload = {
-        "videoId": video_id,
-        "context": {
-            "client": android_client
-        }
+  payload = {
+    "videoId": video_id,
+    "context": {
+        "client": android_client
     }
+}
+
+log.info(f"📦 Payload Used → {android_client['deviceModel']} ({android_client['clientVersion']})")
+
 
     log.info(f"🔑 Using API key: {api_key}")
 
