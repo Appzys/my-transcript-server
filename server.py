@@ -58,19 +58,12 @@ ANDROID_CLIENTS = [
     },
 ]
 
-
-
 HEADERS = {
     "User-Agent": "com.google.android.youtube/19.08.35 (Linux; Android 13)"
 }
 
-
-# =========================
-#  CORE YT REVERSE ENGINEERING
-# =========================
 def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
 
-    # pick random Android client
     android_client = random.choice(ANDROID_CLIENTS)
     log.info(f"📱 Using device profile: {android_client}")
 
@@ -89,29 +82,24 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
 
     api_key = key_match.group(1)
 
-  payload = {
-    "videoId": video_id,
-    "context": {
-        "client": android_client
+    payload = {
+        "videoId": video_id,
+        "context": { "client": android_client }
     }
-}
 
-log.info(f"📦 Payload Used → {android_client['deviceModel']} ({android_client['clientVersion']})")
-
-
-    log.info(f"🔑 Using API key: {api_key}")
+    log.info(f"📦 Payload Used → {android_client['deviceModel']} ({android_client['clientVersion']})")
+    log.info(f"🔑 API key: {api_key}")
 
     url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={api_key}&prettyPrint=false"
 
-    player_json = requests.post(
-        url, json=payload, headers=HEADERS, timeout=15
-    ).json()
+    player_json = requests.post(url, json=payload, headers=HEADERS, timeout=15).json()
 
     if "captions" not in player_json:
         return {"error": "NO_CAPTIONS"}
 
     tracks = player_json["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
 
+    # Select best subtitle track
     selected = None
 
     if preferred_lang:
@@ -123,11 +111,8 @@ log.info(f"📦 Payload Used → {android_client['deviceModel']} ({android_clien
     if selected is None:
         selected = next((t for t in tracks if t.get("kind")), None)
 
-    if selected is None and len(tracks) > 0:
-        selected = tracks[0]
-
     if selected is None:
-        return {"error": "NO_TRACKS"}
+        selected = tracks[0]
 
     track_url = selected["baseUrl"]
     lang = selected.get("languageCode", "unknown")
@@ -143,7 +128,7 @@ log.info(f"📦 Payload Used → {android_client['deviceModel']} ({android_clien
     subs = []
     format_used = "text"
 
-    # ---- OLD format ----
+    # Old format
     for node in root.iter("text"):
         subs.append({
             "text": (node.text or "").replace("\n", " ").strip(),
@@ -152,15 +137,12 @@ log.info(f"📦 Payload Used → {android_client['deviceModel']} ({android_clien
             "lang": lang
         })
 
-    # ---- SRV3 (Tamil/Hindi/Korean supports <s> tags) ----
+    # New SRV3 format
     if len(subs) == 0:
         format_used = "srv3"
-
         for node in root.iter("p"):
             chunks = [s.text.strip() for s in node.iter("s") if s.text]
-
             text_value = " ".join(chunks) if chunks else (node.text or "").strip()
-
             subs.append({
                 "text": text_value,
                 "start": float(node.attrib.get("t", 0)) / 1000,
@@ -171,27 +153,21 @@ log.info(f"📦 Payload Used → {android_client['deviceModel']} ({android_clien
     return {
         "success": True,
         "count": len(subs),
-        "device_used": android_client,  # 👈 add for transparency
+        "device_used": android_client,
         "lang": lang,
         "format": format_used,
         "subtitles": subs
     }
 
 
-# ===========
-#  API ROUTE
-# ===========
 @app.get("/transcript")
 def transcript(video_id: str):
     log.info(f"🎬 Request → {video_id}")
 
     try:
         result = fetch_subtitles(video_id)
-        if result.get("success"):
-            log.info(f"✅ SUCCESS — {result['count']} lines")
-            return {**result, "mode": "DIRECT (NO-PROXY)"}
+        return {**result, "mode": "DIRECT (NO PROXY)"}
     except Exception as e:
-        log.warning(f"❌ Error: {e}")
-        log.warning(traceback.format_exc())
-
-    return {"success": False, "error": "FAILED"}
+        log.error(f"❌ Error: {e}")
+        log.error(traceback.format_exc())
+        return {"success": False, "error": "FAILED"}
