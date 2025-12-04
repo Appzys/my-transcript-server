@@ -13,7 +13,6 @@ HEADERS = {
 }
 
 # ========= PAYLOAD ROTATION =========
-# ========= PAYLOAD ROTATION =========
 PAYLOADS = [
 
     # ======================
@@ -34,66 +33,30 @@ PAYLOADS = [
     {
         "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.02.33", "androidSdkVersion": 33 }}
     },
-    {
-        "context": { "client": { "clientName": "ANDROID", "clientVersion": "18.45.36", "androidSdkVersion": 31 }}
-    },
 
     # ======================
-    # iOS Payloads (Confirmed working)
-    # ======================
-    {
-        "context": { "client": {
-            "clientName": "IOS",
-            "clientVersion": "19.08.35",
-            "deviceMake": "Apple",
-            "osVersion": "17.1.2",
-            "clientScreen": "MOBILE"
-        }}
-    },
-    {
-        "context": { "client": {
-            "clientName": "IOS",
-            "clientVersion": "19.06.38",
-            "deviceMake": "Apple",
-            "osVersion": "17.0.3",
-            "clientScreen": "MOBILE"
-        }}
-    },
-    {
-        "context": { "client": {
-            "clientName": "IOS",
-            "clientVersion": "19.04.36",
-            "deviceMake": "Apple",
-            "osVersion": "16.7",
-            "clientScreen": "MOBILE"
-        }}
-    },
-    {
-        "context": { "client": {
-            "clientName": "IOS",
-            "clientVersion": "19.02.33",
-            "deviceMake": "Apple",
-            "osVersion": "16.0",
-            "clientScreen": "MOBILE"
-        }}
-    },
-    {
-        "context": { "client": {
-            "clientName": "IOS",
-            "clientVersion": "18.49.42",
-            "deviceMake": "Apple",
-            "osVersion": "15.6",
-            "clientScreen": "MOBILE"
-        }}
-    },
-
-    # ======================
-    # WEB Payloads (Stable fallback)
+    # *** WORKING WEB PAYLOADS ***
     # ======================
     {
         "context": { "client": {
             "clientName": "WEB",
             "clientVersion": "2.20240101.00.00",
+            "browserName": "Chrome",
+            "platform": "DESKTOP"
+        }}
+    },
+    {
+        "context": { "client": {
+            "clientName": "WEB",
+            "clientVersion": "2.20240212.00.00",
+            "browserName": "Chrome",
+            "platform": "DESKTOP"
+        }}
+    },
+    {
+        "context": { "client": {
+            "clientName": "WEB",
+            "clientVersion": "2.20240205.00.00",
             "browserName": "Chrome",
             "platform": "DESKTOP"
         }}
@@ -108,22 +71,13 @@ PAYLOADS = [
     },
     {
         "context": { "client": {
-            "clientName": "WEB_REMIX",
-            "clientVersion": "1.20240101.00.00",
+            "clientName": "WEB",
+            "clientVersion": "2.20230812.00.00",
             "browserName": "Chrome",
             "platform": "DESKTOP"
         }}
     },
-    {
-        "context": { "client": {
-            "clientName": "WEB_EMBEDDED_PLAYER",
-            "clientVersion": "1.20240102.00.00",
-            "browserName": "Chrome",
-            "platform": "DESKTOP"
-        }}
-    }
 ]
-
 
 _current_payload_index = 0
 
