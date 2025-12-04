@@ -1,4 +1,3 @@
-import random
 import traceback
 import logging
 import requests
@@ -9,27 +8,14 @@ log = logging.getLogger("yt-rev")
 
 app = FastAPI()
 
-# 🎭 Rotating Android fake client identities
-ANDROID_CLIENTS = [
-    {"clientName": "ANDROID", "clientVersion": "19.08.35", "androidSdkVersion": 33, "hl": "en", "deviceModel": "Pixel 7 Pro"},
-    {"clientName": "ANDROID", "clientVersion": "18.41.38", "androidSdkVersion": 30, "hl": "en", "deviceModel": "Samsung S21"},
-    {"clientName": "ANDROID", "clientVersion": "17.36.4",  "androidSdkVersion": 29, "hl": "en", "deviceModel": "Redmi Note 10"},
-    {"clientName": "ANDROID", "clientVersion": "16.20.35",  "androidSdkVersion": 28, "hl": "en", "deviceModel": "OnePlus 6T"},
-    {"clientName": "ANDROID", "clientVersion": "15.01.36",  "androidSdkVersion": 26, "hl": "en", "deviceModel": "Vivo V9"},
-]
-
 HEADERS = {
     "User-Agent": "com.google.android.youtube/19.08.35 (Linux; Android 13)"
 }
 
-
 # =========================
-#  CORE FUNCTION
+#  CORE REVERSE ENGINEERING
 # =========================
 def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
-
-    android_client = random.choice(ANDROID_CLIENTS)
-    log.info(f"📱 Using payload: {android_client['deviceModel']} (v{android_client['clientVersion']})")
 
     resp = requests.get(
         f"https://www.youtube.com/watch?v={video_id}",
@@ -42,14 +28,18 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
     import re
     key_match = re.search(r'"INNERTUBE_API_KEY":"(.*?)"', html)
     if not key_match:
-        raise Exception("❌ Could not extract API key")
+        raise Exception("Cannot extract innertube key")
 
     api_key = key_match.group(1)
 
     payload = {
         "videoId": video_id,
         "context": {
-            "client": android_client
+            "client": {
+                "clientName": "ANDROID",
+                "clientVersion": "19.08.35",
+                "androidSdkVersion": 33
+            }
         }
     }
 
@@ -63,22 +53,32 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
         return {"error": "NO_CAPTIONS"}
 
     tracks = player_json["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
+
+    # -------- Language Matching -------
     selected = None
 
     if preferred_lang:
-        selected = next((t for t in tracks if t.get("languageCode") == preferred_lang and not t.get("kind")), None)
-    if not selected:
+        selected = next(
+            (t for t in tracks if t.get("languageCode") == preferred_lang and not t.get("kind")),
+            None
+        )
+
+    if selected is None:
         selected = next((t for t in tracks if not t.get("kind")), None)
-    if not selected:
+
+    if selected is None:
         selected = next((t for t in tracks if t.get("kind")), None)
-    if not selected:
+
+    if selected is None and len(tracks) > 0:
         selected = tracks[0]
+
+    if selected is None:
+        return {"error": "NO_TRACKS"}
 
     track_url = selected["baseUrl"]
     lang = selected.get("languageCode", "unknown")
 
-    log.info(f"🌍 Language: {lang}")
-    log.info(f"📄 Subtitle URL: {track_url}")
+    log.info(f"📄 Sub URL: {track_url}")
 
     xml = requests.get(track_url, headers=HEADERS, timeout=15).text
 
@@ -86,8 +86,9 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
     root = ET.fromstring(xml)
 
     subs = []
+    format_used = "text"
 
-    # ---- VTT/XML Type 1 ----
+    # ---- OLD format (English style) ----
     for node in root.iter("text"):
         subs.append({
             "text": (node.text or "").replace("\n", " ").strip(),
@@ -96,11 +97,19 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
             "lang": lang
         })
 
-    # ---- SRV3 Format (Tamil/Hindi/Korean) ----
+    # ---- NEW SRV3 format (Tamil/Hindi/Korean etc) ----
     if len(subs) == 0:
+        format_used = "srv3"
+
         for node in root.iter("p"):
-            chunks = [s.text.strip() for s in node.iter("s") if s.text]
+
+            chunks = []
+            for s in node.iter("s"):
+                if s.text:
+                    chunks.append(s.text.strip())
+
             text_value = " ".join(chunks) if chunks else (node.text or "").strip()
+
             subs.append({
                 "text": text_value,
                 "start": float(node.attrib.get("t", 0)) / 1000,
@@ -111,23 +120,25 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
     return {
         "success": True,
         "count": len(subs),
-        "device_used": android_client,
         "lang": lang,
+        "format": format_used,
         "subtitles": subs
     }
 
 
-# =========================
+# ===========
 #  API ROUTE
-# =========================
+# ===========
 @app.get("/transcript")
 def transcript(video_id: str):
     log.info(f"🎬 Request → {video_id}")
 
     try:
         result = fetch_subtitles(video_id)
-        return {**result, "mode": "DIRECT"}
+        if result.get("success"):
+            return {**result, "mode": "DIRECT"}
+        else:
+            return result
     except Exception as e:
         log.error(f"❌ Error: {e}")
-        log.error(traceback.format_exc())
-        return {"success": False, "error": "FAILED"}
+        return {"success": False, "error": str(e)}
