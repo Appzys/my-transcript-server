@@ -114,6 +114,9 @@ def get_next_payload(video_id: str):
     base_payload = PAYLOADS[_current_payload_index].copy()
     base_payload["videoId"] = video_id
 
+    log.info(f"🔧 Using payload: {PAYLOADS[_current_payload_index]['context']['client']}")
+
+
     # rotate
     _current_payload_index = (_current_payload_index + 1) % len(PAYLOADS)
 
