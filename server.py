@@ -9,13 +9,20 @@ log = logging.getLogger("yt-rev")
 
 app = FastAPI()
 
-# Rotating Android fingerprints (avoid fingerprint ban)
-ANDROID_CLIENTS = [
-    {"clientName": "ANDROID", "clientVersion": "19.08.35", "androidSdkVersion": 33, "hl": "en", "deviceModel": "Pixel 7 Pro"},
-    {"clientName": "ANDROID", "clientVersion": "18.41.38", "androidSdkVersion": 30, "hl": "en", "deviceModel": "Samsung S21"},
-    {"clientName": "ANDROID", "clientVersion": "17.36.4",  "androidSdkVersion": 29, "hl": "en", "deviceModel": "Redmi Note 10"},
-    {"clientName": "ANDROID", "clientVersion": "16.20.35",  "androidSdkVersion": 28, "hl": "en", "deviceModel": "OnePlus 6T"},
-    {"clientName": "ANDROID", "clientVersion": "15.01.36",  "androidSdkVersion": 26, "hl": "en", "deviceModel": "Vivo V9"}
+USERNAME = "txqylbdv"
+PASSWORD = "qx2kyqif5zmk"
+
+PROXIES = [
+    "142.111.48.253:7030",
+    "31.59.20.176:6754",
+    "23.95.150.145:6114",
+    "198.23.239.134:6540",
+    "107.172.163.27:6543",
+    "198.105.121.200:6462",
+    "64.137.96.74:6641",
+    "84.247.60.125:6095",
+    "216.10.27.159:6837",
+    "142.111.67.146:5611",
 ]
 
 HEADERS = {
@@ -23,101 +30,117 @@ HEADERS = {
 }
 
 
-def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
-    android_client = random.choice(ANDROID_CLIENTS)
-    log.info(f"📱 Using device profile → {android_client}")
+def get_proxy():
+    ip = random.choice(PROXIES)
+    return {
+        "http": f"http://{USERNAME}:{PASSWORD}@{ip}",
+        "https": f"http://{USERNAME}:{PASSWORD}@{ip}"
+    }
+
+
+# =========================
+#  CORE REVERSE ENGINEERING
+# =========================
+def fetch_subtitles(video_id: str, preferred_lang: str | None = None, use_proxy=False):
+    proxy = get_proxy() if use_proxy else None
+
+    if use_proxy:
+        proxy = get_proxy()
+        log.warning(f"🧱 Using PROXY → {proxy['http']}")
+    else:
+        proxy = None
+        log.info("⚡ Using DIRECT connection (no proxy)")
 
     resp = requests.get(
         f"https://www.youtube.com/watch?v={video_id}",
         headers=HEADERS,
+        proxies=proxy,
         timeout=15
     )
+
     html = resp.text
 
     import re
-    match = re.search(r'"INNERTUBE_API_KEY":"(.*?)"', html)
-    if not match:
-        raise Exception("Failed to extract Innertube API key")
+    key_match = re.search(r'"INNERTUBE_API_KEY":"(.*?)"', html)
+    if not key_match:
+        raise Exception("Cannot extract innertube key")
 
-    api_key = match.group(1)
-    log.info(f"🔑 API KEY FOUND → {api_key[:10]}...")
+    api_key = key_match.group(1)
 
-    # 💡 IMPORTANT: `params` enables auto-generated captions!
     payload = {
         "videoId": video_id,
-        "params": "CgQIARgA",
-        "context": {"client": android_client}
+        "context": {
+            "client": {
+                "clientName": "ANDROID",
+                "clientVersion": "19.08.35",
+                "androidSdkVersion": 33
+            }
+        }
     }
 
-    log.info(f"📦 Payload → {android_client['deviceModel']} ({android_client['clientVersion']})")
-
     url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={api_key}&prettyPrint=false"
-    player_json = requests.post(url, json=payload, headers=HEADERS, timeout=15).json()
+
+    player_json = requests.post(
+        url, json=payload, headers=HEADERS, proxies=proxy, timeout=15
+    ).json()
 
     if "captions" not in player_json:
-        return {"error": "NO_CAPTIONS_FIELD_FROM_YT"}
+        return {"error": "NO_CAPTIONS"}
 
-    captions = player_json["captions"]
+    tracks = player_json["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
 
-    # -------------------------------
-    # Find captionTracks LOCATION
-    # -------------------------------
-
-    tracks = None
-
-    if "playerCaptionsTracklistRenderer" in captions:
-        tracks = captions["playerCaptionsTracklistRenderer"].get("captionTracks")
-
-    if tracks is None and "playerCaptionsRenderer" in captions:
-        tracks = captions["playerCaptionsRenderer"].get("captionTracks")
-
-    if not tracks:
-        return {"error": "NO_TRACKS_FOUND"}
-
-    # Try preferred language
+    # -------- Language Matching -------
     selected = None
 
     if preferred_lang:
-        selected = next((t for t in tracks if t.get("languageCode") == preferred_lang), None)
+        selected = next((t for t in tracks if t.get("languageCode") == preferred_lang and not t.get("kind")), None)
 
-    # Try normal captions first
     if selected is None:
         selected = next((t for t in tracks if not t.get("kind")), None)
 
-    # Try auto-generated captions (`kind=asr`)
     if selected is None:
-        selected = next((t for t in tracks if t.get("kind") == "asr"), None)
+        selected = next((t for t in tracks if t.get("kind")), None)
 
-    # Last fallback
-    if selected is None:
+    if selected is None and len(tracks) > 0:
         selected = tracks[0]
+
+    if selected is None:
+        return {"error": "NO_TRACKS"}
 
     track_url = selected["baseUrl"]
     lang = selected.get("languageCode", "unknown")
 
-    log.info(f"🌍 Caption Language → {lang}")
-    log.info(f"🔗 Subtitle URL → {track_url}")
+    log.info(f"📄 Sub URL: {track_url}")
 
-    xml = requests.get(track_url, headers=HEADERS, timeout=15).text
+    xml = requests.get(track_url, headers=HEADERS, proxies=proxy, timeout=15).text
 
     import xml.etree.ElementTree as ET
     root = ET.fromstring(xml)
 
     subs = []
+    format_used = "text"
 
-    # ---- English/Old Format ----
+    # ---- OLD format (English style) ----
     for node in root.iter("text"):
         subs.append({
-            "text": (node.text or "").strip(),
+            "text": (node.text or "").replace("\n", " ").strip(),
             "start": float(node.attrib.get("start", 0)),
             "duration": float(node.attrib.get("dur", 0)),
             "lang": lang
         })
 
-    # ---- SRV3 Format (Tamil/Hindi/Korean) ----
-    if not subs:
+    # ---- NEW SRV3 format for Tamil/Hindi/Korean ----
+    if len(subs) == 0:
+        format_used = "srv3"
+
         for node in root.iter("p"):
-            chunks = [s.text.strip() for s in node.iter("s") if s.text]
+
+            # Join nested text from <s> tags
+            chunks = []
+            for s in node.iter("s"):
+                if s.text:
+                    chunks.append(s.text.strip())
+
             text_value = " ".join(chunks) if chunks else (node.text or "").strip()
 
             subs.append({
@@ -130,23 +153,35 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
     return {
         "success": True,
         "count": len(subs),
-        "client_used": android_client,
         "lang": lang,
+        "format": format_used,
         "subtitles": subs
     }
 
 
+# ===========
+#  API ROUTE
+# ===========
 @app.get("/transcript")
 def transcript(video_id: str):
-    log.info(f"➡ Request → {video_id}")
+    log.info(f"🎬 Request → {video_id}")
 
+    # 1️⃣ Direct first
     try:
-        result = fetch_subtitles(video_id)
+        result = fetch_subtitles(video_id, use_proxy=False)
         if result.get("success"):
-            log.info(f"✅ Transcript Loaded ({result['count']} lines)")
-            return result
+            return {**result, "mode": "DIRECT"}
     except Exception as e:
-        log.error(str(e))
-        log.error(traceback.format_exc())
+        log.warning(f"❌ Direct failed: {e}")
 
-    return {"success": False, "error": "FAILED"}
+    # 2️⃣ Retry with proxy
+    for attempt in range(1, 6):
+        try:
+            result = fetch_subtitles(video_id, use_proxy=True)
+            if result.get("success"):
+                return {**result, "mode": f"PROXY (attempt {attempt})"}
+        except Exception as e:
+            log.warning(f"⚠️ Proxy attempt {attempt} failed: {e}")
+            log.warning(traceback.format_exc())
+
+    return {"success": False, "error": "FAILED_ALL_ATTEMPTS"}
