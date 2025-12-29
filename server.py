@@ -9,7 +9,9 @@ log = logging.getLogger("yt-rev")
 app = FastAPI()
 
 HEADERS = {
-    "User-Agent": "com.google.android.youtube/19.08.35 (Linux; Android 13)"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.youtube.com"
 }
 
 
@@ -102,23 +104,21 @@ def get_next_payload(video_id: str):
 #  CORE REVERSE ENGINEERING
 # =========================
 def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
-
     resp = requests.get(
         f"https://www.youtube.com/watch?v={video_id}",
         headers=HEADERS,
         timeout=15
     )
-
     html = resp.text
 
     import re
-    key_match = re.search(r'"INNERTUBE_API_KEY":"(.*?)"', html)
+    key_match = re.search(r'"INNERTUBE_API_KEY"\s*:\s*"([^"]+)"', html) or \
+                re.search(r'"innertubeApiKey"\s*:\s*"([^"]+)"', html)
+
     if not key_match:
-        raise Exception("Cannot extract innertube key")
+        raise Exception("Cannot extract innertube key (HTML changed)")
 
     api_key = key_match.group(1)
-
-    # === CHANGED: payload now rotates ===
     payload = get_next_payload(video_id)
 
     url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={api_key}&prettyPrint=false"
