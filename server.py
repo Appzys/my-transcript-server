@@ -110,11 +110,11 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
             headers=HEADERS,
             timeout=15
         )
+
         html = resp.text
 
-        # 📌 Debug log first 1000 chars of HTML to know what YouTube returned
         log.info("====== HTML RESPONSE START ======")
-        log.info(html[:1500])   # print first portion only (important)
+        log.info(html[:1500])
         log.info("====== HTML RESPONSE END ======")
 
         import re
@@ -122,38 +122,83 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
                     re.search(r'"innertubeApiKey"\s*:?\s*"([^"]+)"', html)
 
         if not key_match:
-            # Save ENTIRE html to a file so you can inspect later
             with open("debug_youtube.html", "w", encoding="utf-8") as f:
                 f.write(html)
-
-            raise Exception("Cannot extract innertube key → YouTube returned non-standard page")
+            raise Exception("Cannot extract innertube key → non-standard YouTube response")
 
         api_key = key_match.group(1)
         log.info(f"✔ Extracted API Key: {api_key}")
 
         payload = get_next_payload(video_id)
-
         url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={api_key}&prettyPrint=false"
 
         player_json = requests.post(
             url, json=payload, headers=HEADERS, timeout=15
         ).json()
 
-        log.info("Player JSON keys received:")
-        log.info(player_json.keys())
+        log.info(f"Player JSON keys -> {list(player_json.keys())}")
 
         if "captions" not in player_json:
-            raise Exception("No captions found in player JSON")
+            raise Exception("No captions found in YouTube response")
 
-        ...
-        return { "success": True, ... }
+        tracks = player_json["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
+
+        # language selection
+        selected = None
+        if preferred_lang:
+            selected = next((t for t in tracks if t.get("languageCode") == preferred_lang and not t.get("kind")), None)
+        if not selected:
+            selected = next((t for t in tracks if not t.get("kind")), None)
+        if not selected and len(tracks) > 0:
+            selected = tracks[0]
+        if not selected:
+            raise Exception("NO_TRACKS")
+
+        track_url = selected["baseUrl"]
+        lang = selected.get("languageCode", "unknown")
+
+        log.info(f"📄 Sub URL: {track_url}")
+
+        xml = requests.get(track_url, headers=HEADERS, timeout=15).text
+
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(xml)
+
+        subs = []
+        format_used = "text"
+
+        for node in root.iter("text"):
+            subs.append({
+                "text": (node.text or "").replace("\n", " ").strip(),
+                "start": float(node.attrib.get("start", 0)),
+                "duration": float(node.attrib.get("dur", 0)),
+                "lang": lang
+            })
+
+        if not subs:
+            format_used = "srv3"
+            for node in root.iter("p"):
+                chunks = [s.text.strip() for s in node.iter("s") if s.text]
+                text_value = " ".join(chunks) if chunks else (node.text or "").strip()
+                subs.append({
+                    "text": text_value,
+                    "start": float(node.attrib.get("t", 0)) / 1000,
+                    "duration": float(node.attrib.get("d", 0)) / 1000,
+                    "lang": lang
+                })
+
+        return {
+            "success": True,
+            "count": len(subs),
+            "lang": lang,
+            "format": format_used,
+            "subtitles": subs
+        }
 
     except Exception as e:
         log.error("🔥 FULL ERROR TRACEBACK ↓↓↓")
         log.error(traceback.format_exc())
-
         return {"success": False, "error": str(e)}
-
 
     tracks = player_json["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
 
