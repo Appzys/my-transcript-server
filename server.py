@@ -14,95 +14,37 @@ HEADERS = {
     "Referer": "https://www.youtube.com"
 }
 
-
 API_KEY = "x9J2f8S2pA9W-qZvB"
 
-# ========= PAYLOAD ROTATION =========
+
+# ================= PAYLOAD ROTATION =================
 PAYLOADS = [
+    {"context": {"client": {"clientName": "ANDROID", "clientVersion": "19.08.35", "androidSdkVersion": 33}}},
+    {"context": {"client": {"clientName": "ANDROID", "clientVersion": "19.06.38", "androidSdkVersion": 33}}},
+    {"context": {"client": {"clientName": "ANDROID", "clientVersion": "19.06.38", "androidSdkVersion": 32}}},
+    {"context": {"client": {"clientName": "ANDROID", "clientVersion": "19.04.36", "androidSdkVersion": 33}}},
+    {"context": {"client": {"clientName": "ANDROID", "clientVersion": "19.02.33", "androidSdkVersion": 33}}},
 
-    # ======================
-    # ANDROID (Working Ones)
-    # ======================
-    {
-        "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.08.35", "androidSdkVersion": 33 }}
-    },
-    {
-        "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.06.38", "androidSdkVersion": 33 }}
-    },
-    {
-        "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.06.38", "androidSdkVersion": 32 }}
-    },
-    {
-        "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.04.36", "androidSdkVersion": 33 }}
-    },
-    {
-        "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.02.33", "androidSdkVersion": 33 }}
-    },
-
-    # ======================
-    # *** WORKING WEB PAYLOADS ***
-    # ======================
-    {
-        "context": { "client": {
-            "clientName": "WEB",
-            "clientVersion": "2.20240101.00.00",
-            "browserName": "Chrome",
-            "platform": "DESKTOP"
-        }}
-    },
-    {
-        "context": { "client": {
-            "clientName": "WEB",
-            "clientVersion": "2.20240212.00.00",
-            "browserName": "Chrome",
-            "platform": "DESKTOP"
-        }}
-    },
-    {
-        "context": { "client": {
-            "clientName": "WEB",
-            "clientVersion": "2.20240205.00.00",
-            "browserName": "Chrome",
-            "platform": "DESKTOP"
-        }}
-    },
-    {
-        "context": { "client": {
-            "clientName": "WEB",
-            "clientVersion": "2.20231215.00.00",
-            "browserName": "Chrome",
-            "platform": "DESKTOP"
-        }}
-    },
-    {
-        "context": { "client": {
-            "clientName": "WEB",
-            "clientVersion": "2.20230812.00.00",
-            "browserName": "Chrome",
-            "platform": "DESKTOP"
-        }}
-    },
+    {"context": {"client": {"clientName": "WEB","clientVersion": "2.20240101.00.00","browserName": "Chrome","platform":"DESKTOP"}}},
+    {"context": {"client": {"clientName": "WEB","clientVersion": "2.20240212.00.00","browserName": "Chrome","platform":"DESKTOP"}}},
+    {"context": {"client": {"clientName": "WEB","clientVersion": "2.20240205.00.00","browserName": "Chrome","platform":"DESKTOP"}}},
+    {"context": {"client": {"clientName": "WEB","clientVersion": "2.20231215.00.00","browserName": "Chrome","platform":"DESKTOP"}}},
+    {"context": {"client": {"clientName": "WEB","clientVersion": "2.20230812.00.00","browserName": "Chrome","platform":"DESKTOP"}}},
 ]
 
 _current_payload_index = 0
-
 def get_next_payload(video_id: str):
     global _current_payload_index
 
-    base_payload = PAYLOADS[_current_payload_index].copy()
-    base_payload["videoId"] = video_id
+    payload = PAYLOADS[_current_payload_index].copy()
+    payload["videoId"] = video_id
+    log.info(f"🔧 Payload Using → {payload['context']['client']}")
 
-    log.info(f"🔧 Using payload: {PAYLOADS[_current_payload_index]['context']['client']}")
-
-
-    # rotate
     _current_payload_index = (_current_payload_index + 1) % len(PAYLOADS)
+    return payload
 
-    return base_payload
 
-# =========================
-#  CORE REVERSE ENGINEERING
-# =========================
+# ================= FETCH SUBTITLES =================
 def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
     try:
         resp = requests.get(
@@ -112,52 +54,47 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
         )
 
         html = resp.text
-
-        log.info("====== HTML RESPONSE START ======")
+        log.info("====== YOUTUBE HTML (first 1500 chars) ======")
         log.info(html[:1500])
-        log.info("====== HTML RESPONSE END ======")
+        log.info("=============================================")
 
         import re
         key_match = re.search(r'"INNERTUBE_API_KEY"\s*:?\s*"([^"]+)"', html) or \
                     re.search(r'"innertubeApiKey"\s*:?\s*"([^"]+)"', html)
 
         if not key_match:
-            with open("debug_youtube.html", "w", encoding="utf-8") as f:
+            with open("debug_youtube.html", "w", encoding="utf-8") as f:  # debugging
                 f.write(html)
-            raise Exception("Cannot extract innertube key → non-standard YouTube response")
+
+            raise Exception("Cannot extract innertube key (YouTube served consent/captcha page)")
 
         api_key = key_match.group(1)
-        log.info(f"✔ Extracted API Key: {api_key}")
+        log.info(f"✔ Extracted API KEY: {api_key}")
 
         payload = get_next_payload(video_id)
         url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={api_key}&prettyPrint=false"
 
-        player_json = requests.post(
-            url, json=payload, headers=HEADERS, timeout=15
-        ).json()
-
-        log.info(f"Player JSON keys -> {list(player_json.keys())}")
+        player_json = requests.post(url, json=payload, headers=HEADERS, timeout=15).json()
+        log.info(f"Player JSON keys: {list(player_json.keys())}")
 
         if "captions" not in player_json:
-            raise Exception("No captions found in YouTube response")
+            raise Exception("NO_CAPTIONS_AVAILABLE")
 
         tracks = player_json["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
 
-        # language selection
+        # ================= Track Selection =================
         selected = None
         if preferred_lang:
             selected = next((t for t in tracks if t.get("languageCode") == preferred_lang and not t.get("kind")), None)
         if not selected:
             selected = next((t for t in tracks if not t.get("kind")), None)
-        if not selected and len(tracks) > 0:
-            selected = tracks[0]
         if not selected:
-            raise Exception("NO_TRACKS")
+            selected = next((t for t in tracks if t.get("kind")), None)
+        if not selected:
+            raise Exception("NO_TRACKS_FOUND")
 
         track_url = selected["baseUrl"]
-        lang = selected.get("languageCode", "unknown")
-
-        log.info(f"📄 Sub URL: {track_url}")
+        lang = selected.get("languageCode","unknown")
 
         xml = requests.get(track_url, headers=HEADERS, timeout=15).text
 
@@ -169,129 +106,49 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
 
         for node in root.iter("text"):
             subs.append({
-                "text": (node.text or "").replace("\n", " ").strip(),
-                "start": float(node.attrib.get("start", 0)),
-                "duration": float(node.attrib.get("dur", 0)),
+                "text": (node.text or "").replace("\n"," ").strip(),
+                "start": float(node.attrib.get("start",0)),
+                "duration": float(node.attrib.get("dur",0)),
                 "lang": lang
             })
 
-        if not subs:
-            format_used = "srv3"
+        if not subs:     # SRV3 format
+            format_used ="srv3"
             for node in root.iter("p"):
-                chunks = [s.text.strip() for s in node.iter("s") if s.text]
-                text_value = " ".join(chunks) if chunks else (node.text or "").strip()
+                chunks=[s.text.strip() for s in node.iter("s") if s.text]
+                text_value=" ".join(chunks) if chunks else (node.text or "").strip()
                 subs.append({
                     "text": text_value,
-                    "start": float(node.attrib.get("t", 0)) / 1000,
-                    "duration": float(node.attrib.get("d", 0)) / 1000,
+                    "start": float(node.attrib.get("t",0))/1000,
+                    "duration": float(node.attrib.get("d",0))/1000,
                     "lang": lang
                 })
 
         return {
-            "success": True,
-            "count": len(subs),
-            "lang": lang,
-            "format": format_used,
-            "subtitles": subs
+            "success":True,
+            "lang":lang,
+            "format":format_used,
+            "count":len(subs),
+            "subtitles":subs
         }
 
     except Exception as e:
-        log.error("🔥 FULL ERROR TRACEBACK ↓↓↓")
+        log.error("🔥 TRACEBACK ↓↓↓")
         log.error(traceback.format_exc())
-        return {"success": False, "error": str(e)}
-
-    tracks = player_json["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
-
-    # -------- Language Matching -------
-    selected = None
-
-    if preferred_lang:
-        selected = next(
-            (t for t in tracks if t.get("languageCode") == preferred_lang and not t.get("kind")),
-            None
-        )
-
-    if selected is None:
-        selected = next((t for t in tracks if not t.get("kind")), None)
-
-    if selected is None:
-        selected = next((t for t in tracks if t.get("kind")), None)
-
-    if selected is None and len(tracks) > 0:
-        selected = tracks[0]
-
-    if selected is None:
-        return {"error": "NO_TRACKS"}
-
-    track_url = selected["baseUrl"]
-    lang = selected.get("languageCode", "unknown")
-
-    log.info(f"📄 Sub URL: {track_url}")
-
-    xml = requests.get(track_url, headers=HEADERS, timeout=15).text
-
-    import xml.etree.ElementTree as ET
-    root = ET.fromstring(xml)
-
-    subs = []
-    format_used = "text"
-
-    # ---- OLD format (English style) ----
-    for node in root.iter("text"):
-        subs.append({
-            "text": (node.text or "").replace("\n", " ").strip(),
-            "start": float(node.attrib.get("start", 0)),
-            "duration": float(node.attrib.get("dur", 0)),
-            "lang": lang
-        })
-
-    # ---- NEW SRV3 format (Tamil/Hindi/Korean etc) ----
-    if len(subs) == 0:
-        format_used = "srv3"
-
-        for node in root.iter("p"):
-
-            chunks = []
-            for s in node.iter("s"):
-                if s.text:
-                    chunks.append(s.text.strip())
-
-            text_value = " ".join(chunks) if chunks else (node.text or "").strip()
-
-            subs.append({
-                "text": text_value,
-                "start": float(node.attrib.get("t", 0)) / 1000,
-                "duration": float(node.attrib.get("d", 0)) / 1000,
-                "lang": lang
-            })
-
-    return {
-        "success": True,
-        "count": len(subs),
-        "lang": lang,
-        "format": format_used,
-        "subtitles": subs
-    }
+        return {"success":False,"error":str(e)}
 
 
-# ===========
-#  API ROUTE
-# ===========
+
+# ================= ROUTE =================
+@app.get("/")
+def root():
+    return {"status":"running","usage":"/transcript?video_id=XXXX"}
+
+
 @app.get("/transcript")
-def transcript(video_id: str, request: Request):
-    client_key = request.headers.get("X-API-KEY")
+def transcript(video_id:str,request:Request):
+    if request.headers.get("X-API-KEY") != API_KEY:
+        raise HTTPException(status_code=401,detail="Unauthorized")
 
-    if client_key != API_KEY:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    log.info(f"🎬 Request → {video_id}")
-    
-    try:
-        result = fetch_subtitles(video_id)
-        if result.get("success"):
-            return {**result, "mode": "DIRECT"}
-        else:
-            return result
-    except Exception as e:
-        log.error(f"❌ Error: {e}")
-        return {"success": False, "error": str(e)}
+    log.info(f"📩 Transcript Request: {video_id}")
+    return fetch_subtitles(video_id)
