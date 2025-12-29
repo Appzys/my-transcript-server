@@ -5,194 +5,125 @@ import re
 from fastapi import FastAPI, Request, HTTPException
 import xml.etree.ElementTree as ET
 
-# ================= LOGGING =================
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger("yt-rev")
 
-# ================= APP SETUP =================
 app = FastAPI()
 API_KEY = "x9J2f8S2pA9W-qZvB"
 
-# Direct internal YouTube API key (no HTML needed)
-INNERTUBE_API_KEY = "AIzaSyAO_FJ2slcYkHfPDXz9fm1E1JY2Eo9uVDo"
 
-HEADERS = {
-    "User-Agent": "com.google.android.youtube/19.08.35 (Linux; Android 13)",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept": "application/json",
-    "Content-Type": "application/json",
-}
+# -----------------------------------------
+# 1) Extract fresh Innertube API Key
+# -----------------------------------------
+def extract_key(video_id):
+    log.info("🕵 Extracting API key from HTML...")
+    html = requests.get(f"https://www.youtube.com/watch?v={video_id}",
+                        headers={"User-Agent": "Mozilla/5.0"}).text
+    match = re.search(r'"INNERTUBE_API_KEY":"([^"]+)"', html)
+    if not match:
+        raise Exception("❌ Failed to extract INNERTUBE_API_KEY")
+    key = match.group(1)
+    log.info(f"🔑 Key extracted: {key[:15]}...")
+    return key
 
-# Payload rotation used by YouTube mobile/WEB
-PAYLOADS = [
-    {"context":{"client":{"clientName":"ANDROID","clientVersion":"19.08.35","androidSdkVersion":33}}},
-    {"context":{"client":{"clientName":"ANDROID","clientVersion":"19.06.38","androidSdkVersion":33}}},
-    {"context":{"client":{"clientName":"ANDROID","clientVersion":"19.04.36","androidSdkVersion":33}}},
-    {"context":{"client":{"clientName":"WEB","clientVersion":"2.20240212.00.00","browserName":"Chrome","platform":"DESKTOP"}}},
-    {"context":{"client":{"clientName":"WEB","clientVersion":"2.20230812.00.00","browserName":"Chrome","platform":"DESKTOP"}}},
-]
 
-rot = 0
-def next_payload(video_id):
-    global rot
-    payload = PAYLOADS[rot].copy()
-    payload["videoId"] = video_id
-    log.info(f"🔄 Payload Selected: {payload['context']['client']}")
-    rot = (rot + 1) % len(PAYLOADS)
-    return payload
+# -----------------------------------------
+# 2) Get Caption Track List
+# -----------------------------------------
+def get_tracks(video_id):
 
-# ================= EXTRACT API KEY FROM HTML =================
-def extract_innertube_key(video_id):
-    """Fallback: extract key from watch page HTML"""
-    resp = requests.get(
-        f"https://www.youtube.com/watch?v={video_id}",
-        headers={"User-Agent": HEADERS["User-Agent"]},
-        timeout=15
-    )
-    
-    log.info(f"📄 HTML Status: {resp.status_code}, Length: {len(resp.text)}")
-    
-    if resp.status_code != 200:
-        raise Exception(f"Failed to fetch watch page: {resp.status_code}")
-    
-    # Multiple regex patterns for different HTML formats
-    patterns = [
-        r'"INNERTUBE_API_KEY":"([^"]+)"',
-        r'"INNERTUBE_API_KEY"\s*:\s*"([^"]+)"',
-        r'INNERTUBE_API_KEY["\']?\s*:\s*["\']([^"\']+)["\']',
-    ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, resp.text)
-        if match:
-            key = match.group(1)
-            log.info(f"✅ API Key extracted: {key[:20]}...")
-            return key
-    
-    raise Exception("Cannot extract INNERTUBE_API_KEY from HTML")
+    log.info(f"📥 Getting track list for {video_id}")
 
-# ================= SUBTITLE FETCH PROCESS =================
-def fetch_subtitles(video_id, preferred_lang=None):
-    try:
-        log.info(f"================= 📥 NEW REQUEST =================")
-        log.info(f"🎯 Video ID: {video_id}")
-        payload = next_payload(video_id)
+    key = extract_key(video_id)
 
-        # ✅ TRY DIRECT API KEY FIRST
-        url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={INNERTUBE_API_KEY}"
-        log.info(f"🌍 Trying direct API: {url}")
+    url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={key}"
 
-        resp = requests.post(url, json=payload, headers=HEADERS, timeout=15)
-        
-        # ✅ CHECK IF HTML ERROR (405/400/etc)
-        if resp.status_code != 200 or not resp.headers.get("content-type", "").startswith("application/json"):
-            log.warning(f"⚠️ Direct API failed ({resp.status_code}): {resp.text[:200]}")
-            
-            # ✅ FALLBACK: Extract key from HTML
-            log.info("🔄 Falling back to HTML key extraction...")
-            api_key = extract_innertube_key(video_id)
-            url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={api_key}"
-            log.info(f"🌍 Using extracted key: {url}")
-            
-            resp = requests.post(url, json=payload, headers=HEADERS, timeout=15)
+    payload = {
+        "context": {
+            "client": {
+                "clientName": "ANDROID",
+                "clientVersion": "19.08.35",
+                "androidSdkVersion": 33
+            }
+        },
+        "videoId": video_id,
+        "params": ""
+    }
 
-        # ✅ PARSE JSON SAFELY
-        try:
-            data = resp.json()
-        except requests.exceptions.JSONDecodeError:
-            log.error(f"❌ Invalid JSON response: {resp.text[:500]}")
-            raise Exception(f"Invalid response from YouTube: {resp.status_code}")
+    res = requests.post(url, json=payload).json()
+    log.info(f"📄 Response keys: {list(res.keys())}")
 
-        log.info(f"📥 Player JSON keys: {list(data.keys())}")
+    if "captions" not in res:
+        return {"success": False, "error": "NO_CAPTIONS"}
 
-        # Captions availability check
-        if "captions" not in data:
-            log.warning("⚠ No captions found in player response")
-            return {"success": False, "error": "NO_CAPTIONS"}
+    tracks = res["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
 
-        tracks = data["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
-        log.info(f"🎧 Tracks Available: {len(tracks)}")
+    output = []
+    for t in tracks:
+        output.append({
+            "name": t.get("name", {}).get("simpleText", "Unknown"),
+            "lang": t.get("languageCode"),
+            "url": t.get("baseUrl")
+        })
 
-        # Pick language (improved matching)
-        track = None
-        if preferred_lang:
-            track = next((t for t in tracks if t.get("languageCode") == preferred_lang and not t.get("kind")), None)
-        
-        if not track:
-            track = next((t for t in tracks if not t.get("kind")), None)
-        
-        if not track and len(tracks) > 0:
-            track = tracks[0]
+    log.info(f"🎧 Tracks found: {len(output)}")
+    return {"success": True, "tracks": output}
 
-        if not track:
-            return {"success": False, "error": "NO_TRACKS"}
 
-        sub_url = track["baseUrl"] + "&fmt=srv3"
-        log.info(f"📄 Subtitle XML URL: {sub_url}")
+# -----------------------------------------
+# 3) Fetch & Parse Subtitles from URL
+# -----------------------------------------
+def fetch_subtitle_from_url(track_url):
 
-        xml_resp = requests.get(sub_url, headers=HEADERS, timeout=15)
-        xml = xml_resp.text
-        log.info(f"📄 XML Status: {xml_resp.status_code}")
+    # force srv3 format if available
+    if "&fmt=" not in track_url:
+        track_url += "&fmt=srv3"
 
-        root = ET.fromstring(xml)
+    xml = requests.get(track_url).text
+    root = ET.fromstring(xml)
 
-        subs = []
-        
-        # Try SRV3 format first
-        for node in root.iter("p"):
-            chunks = [s.text.strip() for s in node.iter("s") if s.text]
-            text_value = " ".join(chunks) if chunks else (node.text or "").strip()
-            
-            if text_value:
-                subs.append({
-                    "text": text_value,
-                    "start": float(node.attrib.get("t", 0)) / 1000,
-                    "duration": float(node.attrib.get("d", 0)) / 1000,
-                })
+    subs = []
 
-        # Fallback to old format
-        if not subs:
-            for node in root.iter("text"):
-                text = (node.text or "").replace("\n", " ").strip()
-                if text:
-                    subs.append({
-                        "text": text,
-                        "start": float(node.attrib.get("start", 0)),
-                        "duration": float(node.attrib.get("dur", 0)),
-                    })
+    # SRV3 captions
+    for node in root.iter("p"):
+        text = "".join(s.text.strip()+" " for s in node.iter("s") if s.text).strip()
+        subs.append({
+            "text": text,
+            "start": float(node.attrib.get("t",0))/1000,
+            "duration": float(node.attrib.get("d",0))/1000
+        })
 
-        log.info(f"📝 Subtitles Extracted: {len(subs)} lines")
+    # fallback <text>
+    if not subs:
+        for node in root.iter("text"):
+            subs.append({
+                "text": node.text,
+                "start": float(node.attrib.get("start",0)),
+                "duration": float(node.attrib.get("dur",0))
+            })
 
-        result = {
-            "success": True,
-            "video_id": video_id,
-            "lang": track.get("languageCode", "unknown"),
-            "count": len(subs),
-            "subtitles": subs
-        }
+    return {"success": True, "count": len(subs), "subtitles": subs}
 
-        log.info(f"✅ Process Completed Successfully for {video_id}")
-        return result
-
-    except Exception as e:
-        log.error("❌ ERROR OCCURRED")
-        log.error(traceback.format_exc())
-        return {"success": False, "error": str(e)}
 
 # ================= ROUTES =================
+
 @app.get("/")
 def home():
-    log.info("🌍 Root Accessed")
-    return {"status":"running","endpoint":"/transcript?video_id=xxxx"}
+    return {"status": "running",
+            "endpoints": ["/tracks?video_id=xxx", "/subtitles?url=xxx"]}
 
-@app.get("/transcript")
-def transcript(video_id: str, request: Request):
-    log.info("================== API HIT ==================")
-    log.info(f"🔐 Checking API Key")
 
+@app.get("/tracks")
+def tracks(video_id: str, request: Request):
     if request.headers.get("X-API-KEY") != API_KEY:
-        log.warning("❌ Invalid API Key Used")
-        raise HTTPException(401, "Invalid API Key")
+        raise HTTPException(401,"API KEY required")
 
-    log.info(f"🔓 Auth Passed → Fetching Transcript for {video_id}")
-    return fetch_subtitles(video_id)
+    return get_tracks(video_id)
+
+
+@app.get("/subtitles")
+def subtitles(url: str, request: Request):
+    if request.headers.get("X-API-KEY") != API_KEY:
+        raise HTTPException(401,"API KEY required")
+
+    return fetch_subtitle_from_url(url)
