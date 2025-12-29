@@ -46,7 +46,8 @@ def fetch_subtitles(video_id, preferred_lang=None):
         log.info(f"🎯 Video ID: {video_id}")
         payload = next_payload(video_id)
 
-        url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={INNERTUBE_API_KEY}"
+        # ✅ FIXED: Use correct endpoint for captions
+        url = f"https://youtubei.googleapis.com/youtubei/v1/get_player?key={INNERTUBE_API_KEY}"
         log.info(f"🌍 Sending Internal API Request: {url}")
 
         data = requests.post(url, json=payload, headers=HEADERS, timeout=15).json()
@@ -60,17 +61,21 @@ def fetch_subtitles(video_id, preferred_lang=None):
         tracks = data["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
         log.info(f"🎧 Tracks Available: {len(tracks)}")
 
-        # Pick language
+        # Pick language (improved matching)
         track = None
         if preferred_lang:
-            track = next((t for t in tracks if t.get("languageCode")==preferred_lang), None)
-            log.info(f"🔍 Preferred Language Search: {preferred_lang} -> {bool(track)}")
-
-        if not track: 
+            track = next((t for t in tracks if t.get("languageCode") == preferred_lang and not t.get("kind")), None)
+        
+        if not track:
+            track = next((t for t in tracks if not t.get("kind")), None)
+        
+        if not track and len(tracks) > 0:
             track = tracks[0]
-            log.info(f"🔁 Fallback Track Selected: {track.get('languageCode')}")
 
-        sub_url = track["baseUrl"]
+        if not track:
+            return {"success": False, "error": "NO_TRACKS"}
+
+        sub_url = track["baseUrl"] + "&fmt=srv3"  # Force srv3 format (better for non-English)
         log.info(f"📄 Subtitle XML URL: {sub_url}")
 
         xml = requests.get(sub_url, headers=HEADERS, timeout=15).text
@@ -79,32 +84,49 @@ def fetch_subtitles(video_id, preferred_lang=None):
         import xml.etree.ElementTree as ET
         root = ET.fromstring(xml)
 
-        subs=[]
-        for node in root.iter("text"):
-            subs.append({
-                "text":(node.text or "").replace("\n"," ").strip(),
-                "start":float(node.attrib.get("start",0)),
-                "duration":float(node.attrib.get("dur",0)),
-            })
+        subs = []
+        
+        # Try SRV3 format first (Tamil/Hindi/Asian langs)
+        for node in root.iter("p"):
+            chunks = [s.text.strip() for s in node.iter("s") if s.text]
+            text_value = " ".join(chunks) if chunks else (node.text or "").strip()
+            
+            if text_value:
+                subs.append({
+                    "text": text_value,
+                    "start": float(node.attrib.get("t", 0)) / 1000,
+                    "duration": float(node.attrib.get("d", 0)) / 1000,
+                })
+
+        # Fallback to old format
+        if not subs:
+            for node in root.iter("text"):
+                text = (node.text or "").replace("\n", " ").strip()
+                if text:
+                    subs.append({
+                        "text": text,
+                        "start": float(node.attrib.get("start", 0)),
+                        "duration": float(node.attrib.get("dur", 0)),
+                    })
 
         log.info(f"📝 Subtitles Extracted: {len(subs)} lines")
 
         result = {
-            "success":True,
-            "video_id":video_id,
-            "lang":track.get("languageCode"),
-            "count":len(subs),
-            "subtitles":subs
+            "success": True,
+            "video_id": video_id,
+            "lang": track.get("languageCode", "unknown"),
+            "count": len(subs),
+            "subtitles": subs
         }
 
         log.info(f"✅ Process Completed Successfully for {video_id}")
         return result
 
-
     except Exception as e:
         log.error("❌ ERROR OCCURRED")
         log.error(traceback.format_exc())
-        return {"success":False,"error":str(e)}
+        return {"success": False, "error": str(e)}
+
 
 
 # ================= ROUTES =================
