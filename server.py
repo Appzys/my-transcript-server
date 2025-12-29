@@ -104,31 +104,56 @@ def get_next_payload(video_id: str):
 #  CORE REVERSE ENGINEERING
 # =========================
 def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
-    resp = requests.get(
-        f"https://www.youtube.com/watch?v={video_id}",
-        headers=HEADERS,
-        timeout=15
-    )
-    html = resp.text
+    try:
+        resp = requests.get(
+            f"https://www.youtube.com/watch?v={video_id}",
+            headers=HEADERS,
+            timeout=15
+        )
+        html = resp.text
 
-    import re
-    key_match = re.search(r'"INNERTUBE_API_KEY"\s*:\s*"([^"]+)"', html) or \
-                re.search(r'"innertubeApiKey"\s*:\s*"([^"]+)"', html)
+        # 📌 Debug log first 1000 chars of HTML to know what YouTube returned
+        log.info("====== HTML RESPONSE START ======")
+        log.info(html[:1500])   # print first portion only (important)
+        log.info("====== HTML RESPONSE END ======")
 
-    if not key_match:
-        raise Exception("Cannot extract innertube key (HTML changed)")
+        import re
+        key_match = re.search(r'"INNERTUBE_API_KEY"\s*:?\s*"([^"]+)"', html) or \
+                    re.search(r'"innertubeApiKey"\s*:?\s*"([^"]+)"', html)
 
-    api_key = key_match.group(1)
-    payload = get_next_payload(video_id)
+        if not key_match:
+            # Save ENTIRE html to a file so you can inspect later
+            with open("debug_youtube.html", "w", encoding="utf-8") as f:
+                f.write(html)
 
-    url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={api_key}&prettyPrint=false"
+            raise Exception("Cannot extract innertube key → YouTube returned non-standard page")
 
-    player_json = requests.post(
-        url, json=payload, headers=HEADERS, timeout=15
-    ).json()
+        api_key = key_match.group(1)
+        log.info(f"✔ Extracted API Key: {api_key}")
 
-    if "captions" not in player_json:
-        return {"error": "NO_CAPTIONS"}
+        payload = get_next_payload(video_id)
+
+        url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={api_key}&prettyPrint=false"
+
+        player_json = requests.post(
+            url, json=payload, headers=HEADERS, timeout=15
+        ).json()
+
+        log.info("Player JSON keys received:")
+        log.info(player_json.keys())
+
+        if "captions" not in player_json:
+            raise Exception("No captions found in player JSON")
+
+        ...
+        return { "success": True, ... }
+
+    except Exception as e:
+        log.error("🔥 FULL ERROR TRACEBACK ↓↓↓")
+        log.error(traceback.format_exc())
+
+        return {"success": False, "error": str(e)}
+
 
     tracks = player_json["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
 
