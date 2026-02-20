@@ -1,7 +1,6 @@
 import traceback
 import logging
 import requests
-import time
 from fastapi import FastAPI, Request, HTTPException
 
 logging.basicConfig(level=logging.INFO)
@@ -20,93 +19,69 @@ API_KEY = "x9J2f8S2pA9W-qZvB"
 PAYLOADS = [
 
     # ======================
-    # ANDROID (Updated Set)
+    # ANDROID (Working Ones)
     # ======================
     {
-        "context": { "client": {
-            "clientName": "ANDROID",
-            "clientVersion": "20.05.41",
-            "androidSdkVersion": 34
-        }}
+        "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.08.35", "androidSdkVersion": 33 }}
     },
     {
-        "context": { "client": {
-            "clientName": "ANDROID",
-            "clientVersion": "20.04.38",
-            "androidSdkVersion": 34
-        }}
+        "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.06.38", "androidSdkVersion": 33 }}
     },
     {
-        "context": { "client": {
-            "clientName": "ANDROID",
-            "clientVersion": "20.03.35",
-            "androidSdkVersion": 33
-        }}
+        "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.06.38", "androidSdkVersion": 32 }}
     },
     {
-        "context": { "client": {
-            "clientName": "ANDROID",
-            "clientVersion": "19.52.33",
-            "androidSdkVersion": 34
-        }}
+        "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.04.36", "androidSdkVersion": 33 }}
     },
     {
-        "context": { "client": {
-            "clientName": "ANDROID",
-            "clientVersion": "19.48.31",
-            "androidSdkVersion": 33
-        }}
+        "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.02.33", "androidSdkVersion": 33 }}
     },
 
     # ======================
-    # WEB (Updated Set)
+    # *** WORKING WEB PAYLOADS ***
     # ======================
     {
         "context": { "client": {
             "clientName": "WEB",
-            "clientVersion": "2.20250201.00.00",
+            "clientVersion": "2.20240101.00.00",
             "browserName": "Chrome",
-            "browserVersion": "122.0.0.0",
             "platform": "DESKTOP"
         }}
     },
     {
         "context": { "client": {
             "clientName": "WEB",
-            "clientVersion": "2.20250115.00.00",
+            "clientVersion": "2.20240212.00.00",
             "browserName": "Chrome",
-            "browserVersion": "121.0.0.0",
             "platform": "DESKTOP"
         }}
     },
     {
         "context": { "client": {
             "clientName": "WEB",
-            "clientVersion": "2.20241220.00.00",
-            "browserName": "Firefox",
-            "browserVersion": "123.0",
-            "platform": "DESKTOP"
-        }}
-    },
-    {
-        "context": { "client": {
-            "clientName": "WEB",
-            "clientVersion": "2.20241110.00.00",
-            "browserName": "Edge",
-            "browserVersion": "121.0.0.0",
-            "platform": "DESKTOP"
-        }}
-    },
-    {
-        "context": { "client": {
-            "clientName": "WEB",
-            "clientVersion": "2.20241005.00.00",
+            "clientVersion": "2.20240205.00.00",
             "browserName": "Chrome",
-            "browserVersion": "120.0.0.0",
+            "platform": "DESKTOP"
+        }}
+    },
+    {
+        "context": { "client": {
+            "clientName": "WEB",
+            "clientVersion": "2.20231215.00.00",
+            "browserName": "Chrome",
+            "platform": "DESKTOP"
+        }}
+    },
+    {
+        "context": { "client": {
+            "clientName": "WEB",
+            "clientVersion": "2.20230812.00.00",
+            "browserName": "Chrome",
             "platform": "DESKTOP"
         }}
     },
 ]
+
 _current_payload_index = 0
 
 def get_next_payload(video_id: str):
@@ -128,98 +103,107 @@ def get_next_payload(video_id: str):
 # =========================
 def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
 
-    MAX_TOTAL_TIME = 30  # seconds (change if needed)
-    start_time = time.time()
-
-    log.info(f"▶ Fetching watch page → {video_id}")
-
-    try:
-        resp = requests.get(
-            f"https://www.youtube.com/watch?v={video_id}",
-            headers=HEADERS,
-            timeout=5
-        )
-    except Exception as e:
-        return {"error": "WATCH_PAGE_FAILED"}
+    resp = requests.get(
+        f"https://www.youtube.com/watch?v={video_id}",
+        headers=HEADERS,
+        timeout=15
+    )
 
     html = resp.text
 
     import re
     key_match = re.search(r'"INNERTUBE_API_KEY":"(.*?)"', html)
     if not key_match:
-        return {"error": "NO_API_KEY"}
+        raise Exception("Cannot extract innertube key")
 
     api_key = key_match.group(1)
+
+    # === CHANGED: payload now rotates ===
+    payload = get_next_payload(video_id)
+
     url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={api_key}&prettyPrint=false"
 
-    for index, payload_template in enumerate(PAYLOADS):
+    player_json = requests.post(
+        url, json=payload, headers=HEADERS, timeout=15
+    ).json()
 
-        # 🔴 GLOBAL TIME CHECK
-        if time.time() - start_time > MAX_TOTAL_TIME:
-            log.error("⏱ Global timeout reached. Stopping.")
-            return {"error": "GLOBAL_TIMEOUT"}
+    if "captions" not in player_json:
+        return {"error": "NO_CAPTIONS"}
 
-        payload = payload_template.copy()
-        payload["videoId"] = video_id
-        client_info = payload["context"]["client"]
+    tracks = player_json["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
 
-        log.info(f"🔧 Trying Payload {index+1}/{len(PAYLOADS)} → {client_info}")
+    # -------- Language Matching -------
+    selected = None
 
-        try:
-            player_resp = requests.post(
-                url,
-                json=payload,
-                headers=HEADERS,
-                timeout=4  # shorter timeout
-            )
-            player_json = player_resp.json()
+    if preferred_lang:
+        selected = next(
+            (t for t in tracks if t.get("languageCode") == preferred_lang and not t.get("kind")),
+            None
+        )
 
-        except Exception as e:
-            log.warning(f"⚠ Payload {index+1} failed → {e}")
-            continue
+    if selected is None:
+        selected = next((t for t in tracks if not t.get("kind")), None)
 
-        if "captions" not in player_json:
-            log.info(f"❌ Payload {index+1} → No captions")
-            continue
+    if selected is None:
+        selected = next((t for t in tracks if t.get("kind")), None)
 
-        tracks = player_json["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
-
-        if not tracks:
-            continue
-
+    if selected is None and len(tracks) > 0:
         selected = tracks[0]
-        track_url = selected["baseUrl"]
 
-        try:
-            xml = requests.get(track_url, headers=HEADERS, timeout=4).text
-        except:
-            continue
+    if selected is None:
+        return {"error": "NO_TRACKS"}
 
-        import xml.etree.ElementTree as ET
-        try:
-            root = ET.fromstring(xml)
-        except:
-            continue
+    track_url = selected["baseUrl"]
+    lang = selected.get("languageCode", "unknown")
 
-        subs = []
-        for node in root.iter("text"):
+    log.info(f"📄 Sub URL: {track_url}")
+
+    xml = requests.get(track_url, headers=HEADERS, timeout=15).text
+
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(xml)
+
+    subs = []
+    format_used = "text"
+
+    # ---- OLD format (English style) ----
+    for node in root.iter("text"):
+        subs.append({
+            "text": (node.text or "").replace("\n", " ").strip(),
+            "start": float(node.attrib.get("start", 0)),
+            "duration": float(node.attrib.get("dur", 0)),
+            "lang": lang
+        })
+
+    # ---- NEW SRV3 format (Tamil/Hindi/Korean etc) ----
+    if len(subs) == 0:
+        format_used = "srv3"
+
+        for node in root.iter("p"):
+
+            chunks = []
+            for s in node.iter("s"):
+                if s.text:
+                    chunks.append(s.text.strip())
+
+            text_value = " ".join(chunks) if chunks else (node.text or "").strip()
+
             subs.append({
-                "text": (node.text or "").strip(),
-                "start": float(node.attrib.get("start", 0)),
-                "duration": float(node.attrib.get("dur", 0)),
+                "text": text_value,
+                "start": float(node.attrib.get("t", 0)) / 1000,
+                "duration": float(node.attrib.get("d", 0)) / 1000,
+                "lang": lang
             })
 
-        if subs:
-            log.info(f"🎉 SUCCESS → Payload {index+1}")
-            return {
-                "success": True,
-                "count": len(subs),
-                "subtitles": subs,
-                "payload_used": client_info
-            }
+    return {
+        "success": True,
+        "count": len(subs),
+        "lang": lang,
+        "format": format_used,
+        "subtitles": subs
+    }
 
-    log.error("🚫 All payloads failed")
-    return {"error": "ALL_PAYLOADS_FAILED"}
+
 # ===========
 #  API ROUTE
 # ===========
