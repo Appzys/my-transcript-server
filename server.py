@@ -1,6 +1,9 @@
 import traceback
 import logging
 import requests
+import time
+import re
+import xml.etree.ElementTree as ET
 from fastapi import FastAPI, Request, HTTPException
 
 logging.basicConfig(level=logging.INFO)
@@ -12,216 +15,227 @@ HEADERS = {
     "User-Agent": "com.google.android.youtube/19.08.35 (Linux; Android 13)"
 }
 
-
 API_KEY = "x9J2f8S2pA9W-qZvB"
 
-# ========= PAYLOAD ROTATION =========
 PAYLOADS = [
-
-    # ======================
-    # ANDROID (Working Ones)
-    # ======================
-    {
-        "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.08.35", "androidSdkVersion": 33 }}
-    },
-    {
-        "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.06.38", "androidSdkVersion": 33 }}
-    },
-    {
-        "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.06.38", "androidSdkVersion": 32 }}
-    },
-    {
-        "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.04.36", "androidSdkVersion": 33 }}
-    },
-    {
-        "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.02.33", "androidSdkVersion": 33 }}
-    },
-
-    # ======================
-    # *** WORKING WEB PAYLOADS ***
-    # ======================
-    {
-        "context": { "client": {
-            "clientName": "WEB",
-            "clientVersion": "2.20240101.00.00",
-            "browserName": "Chrome",
-            "platform": "DESKTOP"
-        }}
-    },
-    {
-        "context": { "client": {
-            "clientName": "WEB",
-            "clientVersion": "2.20240212.00.00",
-            "browserName": "Chrome",
-            "platform": "DESKTOP"
-        }}
-    },
-    {
-        "context": { "client": {
-            "clientName": "WEB",
-            "clientVersion": "2.20240205.00.00",
-            "browserName": "Chrome",
-            "platform": "DESKTOP"
-        }}
-    },
-    {
-        "context": { "client": {
-            "clientName": "WEB",
-            "clientVersion": "2.20231215.00.00",
-            "browserName": "Chrome",
-            "platform": "DESKTOP"
-        }}
-    },
-    {
-        "context": { "client": {
-            "clientName": "WEB",
-            "clientVersion": "2.20230812.00.00",
-            "browserName": "Chrome",
-            "platform": "DESKTOP"
-        }}
-    },
+    {"context": {"client": {"clientName": "ANDROID", "clientVersion": "19.08.35", "androidSdkVersion": 33}}},
+    {"context": {"client": {"clientName": "ANDROID", "clientVersion": "19.06.38", "androidSdkVersion": 33}}},
+    {"context": {"client": {"clientName": "ANDROID", "clientVersion": "19.06.38", "androidSdkVersion": 32}}},
+    {"context": {"client": {"clientName": "ANDROID", "clientVersion": "19.04.36", "androidSdkVersion": 33}}},
+    {"context": {"client": {"clientName": "ANDROID", "clientVersion": "19.02.33", "androidSdkVersion": 33}}},
+    {"context": {"client": {"clientName": "WEB", "clientVersion": "2.20240101.00.00", "browserName": "Chrome", "platform": "DESKTOP"}}},
+    {"context": {"client": {"clientName": "WEB", "clientVersion": "2.20240212.00.00", "browserName": "Chrome", "platform": "DESKTOP"}}},
+    {"context": {"client": {"clientName": "WEB", "clientVersion": "2.20240205.00.00", "browserName": "Chrome", "platform": "DESKTOP"}}},
+    {"context": {"client": {"clientName": "WEB", "clientVersion": "2.20231215.00.00", "browserName": "Chrome", "platform": "DESKTOP"}}},
+    {"context": {"client": {"clientName": "WEB", "clientVersion": "2.20230812.00.00", "browserName": "Chrome", "platform": "DESKTOP"}}},
 ]
 
-_current_payload_index = 0
 
-def get_next_payload(video_id: str):
-    global _current_payload_index
+def fetch_subtitles(video_id: str):
 
-    base_payload = PAYLOADS[_current_payload_index].copy()
-    base_payload["videoId"] = video_id
+    TOTAL_START = time.time()
+    MAX_TOTAL_TIME = 30
 
-    log.info(f"🔧 Using payload: {PAYLOADS[_current_payload_index]['context']['client']}")
+    log.info("=" * 60)
+    log.info(f"🎬 START TRANSCRIPT REQUEST → {video_id}")
 
+    # --------------------------
+    # WATCH PAGE
+    # --------------------------
+    watch_start = time.time()
 
-    # rotate
-    _current_payload_index = (_current_payload_index + 1) % len(PAYLOADS)
+    try:
+        resp = requests.get(
+            f"https://www.youtube.com/watch?v={video_id}",
+            headers=HEADERS,
+            timeout=5
+        )
+    except Exception as e:
+        log.error(f"❌ WATCH_PAGE_EXCEPTION → {e}")
+        return {"error": "WATCH_PAGE_FAILED"}
 
-    return base_payload
+    watch_time = round(time.time() - watch_start, 3)
 
-# =========================
-#  CORE REVERSE ENGINEERING
-# =========================
-def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
+    log.info(f"🌐 WATCH_STATUS → {resp.status_code}")
+    log.info(f"🌐 WATCH_TIME → {watch_time}s")
+    log.info(f"🌐 WATCH_SIZE → {len(resp.text)} bytes")
 
-    resp = requests.get(
-        f"https://www.youtube.com/watch?v={video_id}",
-        headers=HEADERS,
-        timeout=15
-    )
+    if resp.status_code != 200:
+        return {"error": f"WATCH_HTTP_{resp.status_code}"}
 
     html = resp.text
 
-    import re
+    if "captcha" in html.lower():
+        log.warning("⚠ CAPTCHA detected in watch page")
+
     key_match = re.search(r'"INNERTUBE_API_KEY":"(.*?)"', html)
+
     if not key_match:
-        raise Exception("Cannot extract innertube key")
+        log.error("❌ API KEY NOT FOUND")
+        return {"error": "NO_API_KEY"}
 
     api_key = key_match.group(1)
-
-    # === CHANGED: payload now rotates ===
-    payload = get_next_payload(video_id)
+    log.info(f"🔑 API KEY FOUND")
 
     url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={api_key}&prettyPrint=false"
 
-    player_json = requests.post(
-        url, json=payload, headers=HEADERS, timeout=15
-    ).json()
+    # --------------------------
+    # PAYLOAD LOOP
+    # --------------------------
+    failure_summary = []
 
-    if "captions" not in player_json:
-        return {"error": "NO_CAPTIONS"}
+    for index, payload_template in enumerate(PAYLOADS):
 
-    tracks = player_json["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
+        if time.time() - TOTAL_START > MAX_TOTAL_TIME:
+            log.error("⏱ GLOBAL TIMEOUT")
+            return {"error": "GLOBAL_TIMEOUT"}
 
-    # -------- Language Matching -------
-    selected = None
+        payload = payload_template.copy()
+        payload["videoId"] = video_id
+        client_info = payload["context"]["client"]
 
-    if preferred_lang:
-        selected = next(
-            (t for t in tracks if t.get("languageCode") == preferred_lang and not t.get("kind")),
-            None
-        )
+        log.info("-" * 40)
+        log.info(f"🔧 PAYLOAD {index+1}/{len(PAYLOADS)} → {client_info}")
 
-    if selected is None:
-        selected = next((t for t in tracks if not t.get("kind")), None)
+        payload_start = time.time()
 
-    if selected is None:
-        selected = next((t for t in tracks if t.get("kind")), None)
+        try:
+            player_resp = requests.post(
+                url,
+                json=payload,
+                headers=HEADERS,
+                timeout=5
+            )
+        except Exception as e:
+            log.error(f"❌ PLAYER_EXCEPTION → {e}")
+            failure_summary.append(f"P{index+1}:EXCEPTION")
+            continue
 
-    if selected is None and len(tracks) > 0:
+        payload_time = round(time.time() - payload_start, 3)
+
+        log.info(f"📡 PLAYER_STATUS → {player_resp.status_code}")
+        log.info(f"📡 PLAYER_TIME → {payload_time}s")
+        log.info(f"📡 PLAYER_SIZE → {len(player_resp.text)} bytes")
+
+        if player_resp.status_code != 200:
+            failure_summary.append(f"P{index+1}:HTTP_{player_resp.status_code}")
+            continue
+
+        try:
+            player_json = player_resp.json()
+        except Exception:
+            log.error("❌ INVALID JSON RESPONSE")
+            failure_summary.append(f"P{index+1}:INVALID_JSON")
+            continue
+
+        # Check playability
+        playability = player_json.get("playabilityStatus", {})
+        status = playability.get("status")
+        reason = playability.get("reason")
+
+        log.info(f"▶ PLAYABILITY → {status} | {reason}")
+
+        if status and status != "OK":
+            failure_summary.append(f"P{index+1}:PLAY_{status}")
+            continue
+
+        if "captions" not in player_json:
+            log.info("❌ NO 'captions' FIELD")
+            failure_summary.append(f"P{index+1}:NO_CAPTIONS")
+            continue
+
+        tracks = player_json["captions"].get(
+            "playerCaptionsTracklistRenderer", {}
+        ).get("captionTracks")
+
+        if not tracks:
+            log.info("❌ EMPTY CAPTION TRACKS")
+            failure_summary.append(f"P{index+1}:EMPTY_TRACKS")
+            continue
+
         selected = tracks[0]
+        track_url = selected.get("baseUrl")
 
-    if selected is None:
-        return {"error": "NO_TRACKS"}
+        if not track_url:
+            failure_summary.append(f"P{index+1}:NO_TRACK_URL")
+            continue
 
-    track_url = selected["baseUrl"]
-    lang = selected.get("languageCode", "unknown")
+        # --------------------------
+        # XML FETCH
+        # --------------------------
+        xml_start = time.time()
 
-    log.info(f"📄 Sub URL: {track_url}")
+        try:
+            xml_resp = requests.get(track_url, headers=HEADERS, timeout=5)
+        except Exception as e:
+            log.error(f"❌ XML_EXCEPTION → {e}")
+            failure_summary.append(f"P{index+1}:XML_EXCEPTION")
+            continue
 
-    xml = requests.get(track_url, headers=HEADERS, timeout=15).text
+        xml_time = round(time.time() - xml_start, 3)
 
-    import xml.etree.ElementTree as ET
-    root = ET.fromstring(xml)
+        log.info(f"📄 XML_STATUS → {xml_resp.status_code}")
+        log.info(f"📄 XML_TIME → {xml_time}s")
+        log.info(f"📄 XML_SIZE → {len(xml_resp.text)} bytes")
 
-    subs = []
-    format_used = "text"
+        if xml_resp.status_code != 200:
+            failure_summary.append(f"P{index+1}:XML_HTTP_{xml_resp.status_code}")
+            continue
 
-    # ---- OLD format (English style) ----
-    for node in root.iter("text"):
-        subs.append({
-            "text": (node.text or "").replace("\n", " ").strip(),
-            "start": float(node.attrib.get("start", 0)),
-            "duration": float(node.attrib.get("dur", 0)),
-            "lang": lang
-        })
+        if "<html" in xml_resp.text.lower():
+            log.warning("⚠ XML returned HTML page (likely blocked)")
+            failure_summary.append(f"P{index+1}:XML_BLOCKED")
+            continue
 
-    # ---- NEW SRV3 format (Tamil/Hindi/Korean etc) ----
-    if len(subs) == 0:
-        format_used = "srv3"
+        try:
+            root = ET.fromstring(xml_resp.text)
+        except Exception:
+            log.error("❌ XML_PARSE_ERROR")
+            failure_summary.append(f"P{index+1}:XML_PARSE_ERROR")
+            continue
 
-        for node in root.iter("p"):
-
-            chunks = []
-            for s in node.iter("s"):
-                if s.text:
-                    chunks.append(s.text.strip())
-
-            text_value = " ".join(chunks) if chunks else (node.text or "").strip()
-
+        subs = []
+        for node in root.iter("text"):
             subs.append({
-                "text": text_value,
-                "start": float(node.attrib.get("t", 0)) / 1000,
-                "duration": float(node.attrib.get("d", 0)) / 1000,
-                "lang": lang
+                "text": (node.text or "").strip(),
+                "start": float(node.attrib.get("start", 0)),
+                "duration": float(node.attrib.get("dur", 0)),
             })
 
+        if subs:
+            total_time = round(time.time() - TOTAL_START, 3)
+            log.info(f"🎉 SUCCESS → PAYLOAD {index+1}")
+            log.info(f"⏱ TOTAL_TIME → {total_time}s")
+            return {
+                "success": True,
+                "count": len(subs),
+                "payload_used": client_info,
+                "total_time": total_time,
+                "subtitles": subs
+            }
+
+        failure_summary.append(f"P{index+1}:NO_SUBS")
+
+    total_time = round(time.time() - TOTAL_START, 3)
+
+    log.error("🚫 ALL PAYLOADS FAILED")
+    log.error(f"🧾 FAILURE SUMMARY → {failure_summary}")
+    log.error(f"⏱ TOTAL_TIME → {total_time}s")
+
     return {
-        "success": True,
-        "count": len(subs),
-        "lang": lang,
-        "format": format_used,
-        "subtitles": subs
+        "success": False,
+        "error": "ALL_PAYLOADS_FAILED",
+        "failure_summary": failure_summary,
+        "total_time": total_time
     }
 
 
-# ===========
-#  API ROUTE
-# ===========
 @app.get("/transcript")
 def transcript(video_id: str, request: Request):
+
     client_key = request.headers.get("X-API-KEY")
 
     if client_key != API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    log.info(f"🎬 Request → {video_id}")
-    
-    try:
-        result = fetch_subtitles(video_id)
-        if result.get("success"):
-            return {**result, "mode": "DIRECT"}
-        else:
-            return result
-    except Exception as e:
-        log.error(f"❌ Error: {e}")
-        return {"success": False, "error": str(e)}
+    return fetch_subtitles(video_id)
