@@ -36,12 +36,10 @@ def fetch_subtitles(video_id: str):
     TOTAL_START = time.time()
     MAX_TOTAL_TIME = 30
 
-    log.info("=" * 60)
+    log.info("=" * 70)
     log.info(f"🎬 START TRANSCRIPT REQUEST → {video_id}")
 
-    # --------------------------
     # WATCH PAGE
-    # --------------------------
     try:
         resp = requests.get(
             f"https://www.youtube.com/watch?v={video_id}",
@@ -60,11 +58,7 @@ def fetch_subtitles(video_id: str):
 
     html = resp.text
 
-    if "captcha" in html.lower():
-        log.warning("⚠ CAPTCHA detected in watch page")
-
     key_match = re.search(r'"INNERTUBE_API_KEY":"(.*?)"', html)
-
     if not key_match:
         log.error("❌ API KEY NOT FOUND")
         return {"error": "NO_API_KEY"}
@@ -76,9 +70,7 @@ def fetch_subtitles(video_id: str):
 
     failure_summary = []
 
-    # --------------------------
     # PAYLOAD LOOP
-    # --------------------------
     for index, payload_template in enumerate(PAYLOADS):
 
         if time.time() - TOTAL_START > MAX_TOTAL_TIME:
@@ -128,15 +120,15 @@ def fetch_subtitles(video_id: str):
             failure_summary.append(f"P{index+1}:PLAY_{status}")
             continue
 
-        if "captions" not in player_json:
+        captions_data = player_json.get("captions")
+        if not captions_data:
+            log.warning("❌ NO CAPTIONS FIELD")
             failure_summary.append(f"P{index+1}:NO_CAPTIONS")
             continue
 
-        tracks = player_json["captions"].get(
-            "playerCaptionsTracklistRenderer", {}
-        ).get("captionTracks")
-
+        tracks = captions_data.get("playerCaptionsTracklistRenderer", {}).get("captionTracks")
         if not tracks:
+            log.warning("❌ EMPTY CAPTION TRACKS")
             failure_summary.append(f"P{index+1}:EMPTY_TRACKS")
             continue
 
@@ -144,14 +136,16 @@ def fetch_subtitles(video_id: str):
         track_url = selected.get("baseUrl")
 
         if not track_url:
+            log.warning("❌ NO TRACK URL")
             failure_summary.append(f"P{index+1}:NO_TRACK_URL")
             continue
 
+        # 🔥 THIS IS WHAT YOU WANTED
+        log.info("=" * 40)
         log.info(f"🔗 CAPTION URL → {track_url}")
+        log.info("=" * 40)
 
-        # --------------------------
         # XML FETCH
-        # --------------------------
         try:
             xml_resp = requests.get(track_url, headers=HEADERS, timeout=5)
         except Exception as e:
@@ -171,8 +165,8 @@ def fetch_subtitles(video_id: str):
             failure_summary.append(f"P{index+1}:XML_BLOCKED")
             continue
 
-        # Debug: print first 500 chars
-        log.info("📄 XML PREVIEW ↓")
+        # Debug preview
+        log.info("📄 XML PREVIEW (first 500 chars):")
         log.info(xml_resp.text[:500])
 
         try:
