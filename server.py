@@ -42,8 +42,6 @@ def fetch_subtitles(video_id: str):
     # --------------------------
     # WATCH PAGE
     # --------------------------
-    watch_start = time.time()
-
     try:
         resp = requests.get(
             f"https://www.youtube.com/watch?v={video_id}",
@@ -54,10 +52,7 @@ def fetch_subtitles(video_id: str):
         log.error(f"❌ WATCH_PAGE_EXCEPTION → {e}")
         return {"error": "WATCH_PAGE_FAILED"}
 
-    watch_time = round(time.time() - watch_start, 3)
-
     log.info(f"🌐 WATCH_STATUS → {resp.status_code}")
-    log.info(f"🌐 WATCH_TIME → {watch_time}s")
     log.info(f"🌐 WATCH_SIZE → {len(resp.text)} bytes")
 
     if resp.status_code != 200:
@@ -75,15 +70,15 @@ def fetch_subtitles(video_id: str):
         return {"error": "NO_API_KEY"}
 
     api_key = key_match.group(1)
-    log.info(f"🔑 API KEY FOUND")
+    log.info("🔑 API KEY FOUND")
 
     url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={api_key}&prettyPrint=false"
+
+    failure_summary = []
 
     # --------------------------
     # PAYLOAD LOOP
     # --------------------------
-    failure_summary = []
-
     for index, payload_template in enumerate(PAYLOADS):
 
         if time.time() - TOTAL_START > MAX_TOTAL_TIME:
@@ -97,8 +92,6 @@ def fetch_subtitles(video_id: str):
         log.info("-" * 40)
         log.info(f"🔧 PAYLOAD {index+1}/{len(PAYLOADS)} → {client_info}")
 
-        payload_start = time.time()
-
         try:
             player_resp = requests.post(
                 url,
@@ -111,10 +104,7 @@ def fetch_subtitles(video_id: str):
             failure_summary.append(f"P{index+1}:EXCEPTION")
             continue
 
-        payload_time = round(time.time() - payload_start, 3)
-
         log.info(f"📡 PLAYER_STATUS → {player_resp.status_code}")
-        log.info(f"📡 PLAYER_TIME → {payload_time}s")
         log.info(f"📡 PLAYER_SIZE → {len(player_resp.text)} bytes")
 
         if player_resp.status_code != 200:
@@ -128,7 +118,6 @@ def fetch_subtitles(video_id: str):
             failure_summary.append(f"P{index+1}:INVALID_JSON")
             continue
 
-        # Check playability
         playability = player_json.get("playabilityStatus", {})
         status = playability.get("status")
         reason = playability.get("reason")
@@ -140,7 +129,6 @@ def fetch_subtitles(video_id: str):
             continue
 
         if "captions" not in player_json:
-            log.info("❌ NO 'captions' FIELD")
             failure_summary.append(f"P{index+1}:NO_CAPTIONS")
             continue
 
@@ -149,7 +137,6 @@ def fetch_subtitles(video_id: str):
         ).get("captionTracks")
 
         if not tracks:
-            log.info("❌ EMPTY CAPTION TRACKS")
             failure_summary.append(f"P{index+1}:EMPTY_TRACKS")
             continue
 
@@ -160,11 +147,11 @@ def fetch_subtitles(video_id: str):
             failure_summary.append(f"P{index+1}:NO_TRACK_URL")
             continue
 
+        log.info(f"🔗 CAPTION URL → {track_url}")
+
         # --------------------------
         # XML FETCH
         # --------------------------
-        xml_start = time.time()
-
         try:
             xml_resp = requests.get(track_url, headers=HEADERS, timeout=5)
         except Exception as e:
@@ -172,10 +159,7 @@ def fetch_subtitles(video_id: str):
             failure_summary.append(f"P{index+1}:XML_EXCEPTION")
             continue
 
-        xml_time = round(time.time() - xml_start, 3)
-
         log.info(f"📄 XML_STATUS → {xml_resp.status_code}")
-        log.info(f"📄 XML_TIME → {xml_time}s")
         log.info(f"📄 XML_SIZE → {len(xml_resp.text)} bytes")
 
         if xml_resp.status_code != 200:
@@ -183,9 +167,13 @@ def fetch_subtitles(video_id: str):
             continue
 
         if "<html" in xml_resp.text.lower():
-            log.warning("⚠ XML returned HTML page (likely blocked)")
+            log.warning("⚠ XML returned HTML page")
             failure_summary.append(f"P{index+1}:XML_BLOCKED")
             continue
+
+        # Debug: print first 500 chars
+        log.info("📄 XML PREVIEW ↓")
+        log.info(xml_resp.text[:500])
 
         try:
             root = ET.fromstring(xml_resp.text)
@@ -194,8 +182,9 @@ def fetch_subtitles(video_id: str):
             failure_summary.append(f"P{index+1}:XML_PARSE_ERROR")
             continue
 
+        # Namespace-safe extraction
         subs = []
-        for node in root.iter("text"):
+        for node in root.findall(".//{*}text"):
             subs.append({
                 "text": (node.text or "").strip(),
                 "start": float(node.attrib.get("start", 0)),
@@ -205,22 +194,22 @@ def fetch_subtitles(video_id: str):
         if subs:
             total_time = round(time.time() - TOTAL_START, 3)
             log.info(f"🎉 SUCCESS → PAYLOAD {index+1}")
-            log.info(f"⏱ TOTAL_TIME → {total_time}s")
             return {
                 "success": True,
                 "count": len(subs),
                 "payload_used": client_info,
+                "caption_url": track_url,
                 "total_time": total_time,
                 "subtitles": subs
             }
 
+        log.warning("❌ NO_SUBS AFTER PARSING")
         failure_summary.append(f"P{index+1}:NO_SUBS")
 
     total_time = round(time.time() - TOTAL_START, 3)
 
     log.error("🚫 ALL PAYLOADS FAILED")
     log.error(f"🧾 FAILURE SUMMARY → {failure_summary}")
-    log.error(f"⏱ TOTAL_TIME → {total_time}s")
 
     return {
         "success": False,
