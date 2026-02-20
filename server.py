@@ -2,8 +2,6 @@ import traceback
 import logging
 import requests
 import time
-import re
-import xml.etree.ElementTree as ET
 from fastapi import FastAPI, Request, HTTPException
 
 logging.basicConfig(level=logging.INFO)
@@ -24,165 +22,176 @@ PAYLOADS = [
     {"context": {"client": {"clientName": "ANDROID", "clientVersion": "19.04.36", "androidSdkVersion": 33}}},
     {"context": {"client": {"clientName": "ANDROID", "clientVersion": "19.02.33", "androidSdkVersion": 33}}},
     {"context": {"client": {"clientName": "WEB", "clientVersion": "2.20240101.00.00", "browserName": "Chrome", "platform": "DESKTOP"}}},
+    {"context": {"client": {"clientName": "WEB", "clientVersion": "2.20240212.00.00", "browserName": "Chrome", "platform": "DESKTOP"}}},
+    {"context": {"client": {"clientName": "WEB", "clientVersion": "2.20240205.00.00", "browserName": "Chrome", "platform": "DESKTOP"}}},
+    {"context": {"client": {"clientName": "WEB", "clientVersion": "2.20231215.00.00", "browserName": "Chrome", "platform": "DESKTOP"}}},
+    {"context": {"client": {"clientName": "WEB", "clientVersion": "2.20230812.00.00", "browserName": "Chrome", "platform": "DESKTOP"}}},
 ]
+
+_current_payload_index = 0
+
+def get_next_payload(video_id: str):
+    global _current_payload_index
+
+    base_payload = PAYLOADS[_current_payload_index].copy()
+    base_payload["videoId"] = video_id
+
+    log.info("=" * 60)
+    log.info(f"🔧 USING PAYLOAD INDEX → {_current_payload_index}")
+    log.info(f"🔧 CLIENT INFO → {PAYLOADS[_current_payload_index]['context']['client']}")
+
+    _current_payload_index = (_current_payload_index + 1) % len(PAYLOADS)
+    return base_payload
 
 
 def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
 
-    TOTAL_START = time.time()
+    start_total = time.time()
+    log.info("=" * 70)
+    log.info(f"🎬 START TRANSCRIPT → {video_id}")
 
-    log.info("=" * 60)
-    log.info(f"🎬 START TRANSCRIPT REQUEST → {video_id}")
-
-    # -------- WATCH PAGE --------
+    # WATCH PAGE
+    watch_start = time.time()
     resp = requests.get(
         f"https://www.youtube.com/watch?v={video_id}",
         headers=HEADERS,
-        timeout=10
+        timeout=15
     )
+    watch_time = round(time.time() - watch_start, 3)
 
     log.info(f"🌐 WATCH_STATUS → {resp.status_code}")
+    log.info(f"🌐 WATCH_TIME → {watch_time}s")
+    log.info(f"🌐 WATCH_SIZE → {len(resp.text)} bytes")
 
     html = resp.text
 
+    import re
     key_match = re.search(r'"INNERTUBE_API_KEY":"(.*?)"', html)
     if not key_match:
-        log.error("❌ API KEY NOT FOUND")
-        return {"error": "NO_API_KEY"}
+        log.error("❌ INNERTUBE API KEY NOT FOUND")
+        raise Exception("Cannot extract innertube key")
 
     api_key = key_match.group(1)
+    log.info(f"🔑 API KEY EXTRACTED → {api_key[:10]}...")
+
+    payload = get_next_payload(video_id)
+
     url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={api_key}&prettyPrint=false"
+    log.info(f"📡 PLAYER URL → {url}")
 
-    # -------- PAYLOAD LOOP --------
-    for index, payload_template in enumerate(PAYLOADS):
+    player_start = time.time()
+    player_resp = requests.post(
+        url, json=payload, headers=HEADERS, timeout=15
+    )
+    player_time = round(time.time() - player_start, 3)
 
-        payload = payload_template.copy()
-        payload["videoId"] = video_id
-        client_info = payload["context"]["client"]
+    log.info(f"📡 PLAYER_STATUS → {player_resp.status_code}")
+    log.info(f"📡 PLAYER_TIME → {player_time}s")
+    log.info(f"📡 PLAYER_SIZE → {len(player_resp.text)} bytes")
 
-        log.info("-" * 40)
-        log.info(f"🔧 PAYLOAD {index+1} → {client_info}")
+    player_json = player_resp.json()
 
-        player_resp = requests.post(
-            url,
-            json=payload,
-            headers=HEADERS,
-            timeout=10
+    playability = player_json.get("playabilityStatus", {})
+    log.info(f"▶ PLAYABILITY_STATUS → {playability}")
+
+    if "captions" not in player_json:
+        log.warning("❌ CAPTIONS FIELD NOT FOUND")
+        return {"error": "NO_CAPTIONS"}
+
+    tracks = player_json["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
+    log.info(f"🧾 TRACK_COUNT → {len(tracks)}")
+
+    selected = None
+
+    if preferred_lang:
+        selected = next(
+            (t for t in tracks if t.get("languageCode") == preferred_lang and not t.get("kind")),
+            None
         )
+        log.info(f"🌍 MATCHED preferred_lang → {preferred_lang}")
 
-        log.info(f"📡 PLAYER_STATUS → {player_resp.status_code}")
+    if selected is None:
+        selected = next((t for t in tracks if not t.get("kind")), None)
+        log.info("🌍 SELECTED NON-AUTO TRACK")
 
-        if player_resp.status_code != 200:
-            continue
+    if selected is None:
+        selected = next((t for t in tracks if t.get("kind")), None)
+        log.info("🌍 SELECTED AUTO TRACK")
 
-        player_json = player_resp.json()
+    if selected is None and len(tracks) > 0:
+        selected = tracks[0]
+        log.info("🌍 FALLBACK FIRST TRACK")
 
-        playability = player_json.get("playabilityStatus", {})
-        status = playability.get("status")
+    if selected is None:
+        log.error("❌ NO TRACK SELECTED")
+        return {"error": "NO_TRACKS"}
 
-        log.info(f"▶ PLAYABILITY → {status}")
+    track_url = selected["baseUrl"]
+    lang = selected.get("languageCode", "unknown")
 
-        if status != "OK":
-            continue
+    log.info("=" * 40)
+    log.info(f"🔗 CAPTION URL → {track_url}")
+    log.info(f"🌍 LANGUAGE → {lang}")
+    log.info("=" * 40)
 
-        captions = player_json.get("captions")
-        if not captions:
-            log.warning("❌ NO_CAPTIONS")
-            continue
+    # XML FETCH
+    xml_start = time.time()
+    xml_resp = requests.get(track_url, headers=HEADERS, timeout=15)
+    xml_time = round(time.time() - xml_start, 3)
 
-        tracks = captions.get("playerCaptionsTracklistRenderer", {}).get("captionTracks")
-        if not tracks:
-            log.warning("❌ EMPTY_TRACKS")
-            continue
+    log.info(f"📄 XML_STATUS → {xml_resp.status_code}")
+    log.info(f"📄 XML_TIME → {xml_time}s")
+    log.info(f"📄 XML_SIZE → {len(xml_resp.text)} bytes")
+    log.info("📄 XML_PREVIEW ↓")
+    log.info(xml_resp.text[:500])
 
-        # ---- Language selection (from reference code) ----
-        selected = None
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(xml_resp.text)
 
-        if preferred_lang:
-            selected = next(
-                (t for t in tracks if t.get("languageCode") == preferred_lang and not t.get("kind")),
-                None
-            )
+    subs = []
+    format_used = "text"
 
-        if selected is None:
-            selected = next((t for t in tracks if not t.get("kind")), None)
+    for node in root.iter("text"):
+        subs.append({
+            "text": (node.text or "").replace("\n", " ").strip(),
+            "start": float(node.attrib.get("start", 0)),
+            "duration": float(node.attrib.get("dur", 0)),
+            "lang": lang
+        })
 
-        if selected is None:
-            selected = next((t for t in tracks if t.get("kind")), None)
+    log.info(f"🧾 TEXT_FORMAT_COUNT → {len(subs)}")
 
-        if selected is None and len(tracks) > 0:
-            selected = tracks[0]
+    if len(subs) == 0:
+        format_used = "srv3"
+        log.info("🔄 SWITCHING TO SRV3 FORMAT PARSE")
 
-        if selected is None:
-            log.warning("❌ NO_TRACK_SELECTED")
-            continue
+        for node in root.iter("p"):
 
-        track_url = selected["baseUrl"]
-        lang = selected.get("languageCode", "unknown")
+            chunks = []
+            for s in node.iter("s"):
+                if s.text:
+                    chunks.append(s.text.strip())
 
-        log.info(f"🔗 CAPTION URL → {track_url}")
-        log.info(f"🌍 LANGUAGE → {lang}")
+            text_value = " ".join(chunks) if chunks else (node.text or "").strip()
 
-        # -------- FETCH XML --------
-        xml_resp = requests.get(track_url, headers=HEADERS, timeout=10)
-
-        log.info(f"📄 XML_STATUS → {xml_resp.status_code}")
-        log.info(f"📄 XML_SIZE → {len(xml_resp.text)}")
-
-        xml_text = xml_resp.text
-
-        if "<html" in xml_text.lower():
-            log.warning("⚠ XML returned HTML page")
-            continue
-
-        root = ET.fromstring(xml_text)
-
-        subs = []
-        format_used = "text"
-
-        # -------- FORMAT 1: <text> --------
-        for node in root.findall(".//{*}text"):
             subs.append({
-                "text": (node.text or "").replace("\n", " ").strip(),
-                "start": float(node.attrib.get("start", 0)),
-                "duration": float(node.attrib.get("dur", 0)),
+                "text": text_value,
+                "start": float(node.attrib.get("t", 0)) / 1000,
+                "duration": float(node.attrib.get("d", 0)) / 1000,
                 "lang": lang
             })
 
-        # -------- FORMAT 2: srv3 --------
-        if len(subs) == 0:
-            format_used = "srv3"
+    log.info(f"🧾 FINAL_SUB_COUNT → {len(subs)}")
+    log.info(f"🧾 FORMAT_USED → {format_used}")
+    log.info(f"⏱ TOTAL_TIME → {round(time.time() - start_total, 3)}s")
 
-            for node in root.findall(".//{*}p"):
-                chunks = []
-                for s in node.findall(".//{*}s"):
-                    if s.text:
-                        chunks.append(s.text.strip())
-
-                text_value = " ".join(chunks) if chunks else (node.text or "").strip()
-
-                subs.append({
-                    "text": text_value,
-                    "start": float(node.attrib.get("t", 0)) / 1000,
-                    "duration": float(node.attrib.get("d", 0)) / 1000,
-                    "lang": lang
-                })
-
-        log.info(f"🧾 FORMAT_USED → {format_used}")
-        log.info(f"🧾 SUB_COUNT → {len(subs)}")
-
-        if subs:
-            return {
-                "success": True,
-                "count": len(subs),
-                "lang": lang,
-                "format": format_used,
-                "caption_url": track_url,
-                "subtitles": subs
-            }
-
-    log.error("🚫 ALL PAYLOADS FAILED")
-    return {"error": "ALL_PAYLOADS_FAILED"}
+    return {
+        "success": True,
+        "count": len(subs),
+        "lang": lang,
+        "format": format_used,
+        "subtitles": subs
+    }
 
 
 @app.get("/transcript")
@@ -192,4 +201,15 @@ def transcript(video_id: str, request: Request):
     if client_key != API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    return fetch_subtitles(video_id)
+    log.info(f"🎬 REQUEST RECEIVED → {video_id}")
+    
+    try:
+        result = fetch_subtitles(video_id)
+        if result.get("success"):
+            return {**result, "mode": "DIRECT"}
+        else:
+            return result
+    except Exception as e:
+        log.error(f"❌ ERROR OCCURRED → {str(e)}")
+        log.error(traceback.format_exc())
+        return {"success": False, "error": str(e)}
