@@ -20,69 +20,93 @@ API_KEY = "x9J2f8S2pA9W-qZvB"
 PAYLOADS = [
 
     # ======================
-    # ANDROID (Working Ones)
+    # ANDROID (Updated Set)
     # ======================
     {
-        "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.08.35", "androidSdkVersion": 33 }}
+        "context": { "client": {
+            "clientName": "ANDROID",
+            "clientVersion": "20.05.41",
+            "androidSdkVersion": 34
+        }}
     },
     {
-        "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.06.38", "androidSdkVersion": 33 }}
+        "context": { "client": {
+            "clientName": "ANDROID",
+            "clientVersion": "20.04.38",
+            "androidSdkVersion": 34
+        }}
     },
     {
-        "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.06.38", "androidSdkVersion": 32 }}
+        "context": { "client": {
+            "clientName": "ANDROID",
+            "clientVersion": "20.03.35",
+            "androidSdkVersion": 33
+        }}
     },
     {
-        "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.04.36", "androidSdkVersion": 33 }}
+        "context": { "client": {
+            "clientName": "ANDROID",
+            "clientVersion": "19.52.33",
+            "androidSdkVersion": 34
+        }}
     },
     {
-        "context": { "client": { "clientName": "ANDROID", "clientVersion": "19.02.33", "androidSdkVersion": 33 }}
+        "context": { "client": {
+            "clientName": "ANDROID",
+            "clientVersion": "19.48.31",
+            "androidSdkVersion": 33
+        }}
     },
 
     # ======================
-    # *** WORKING WEB PAYLOADS ***
+    # WEB (Updated Set)
     # ======================
     {
         "context": { "client": {
             "clientName": "WEB",
-            "clientVersion": "2.20240101.00.00",
+            "clientVersion": "2.20250201.00.00",
             "browserName": "Chrome",
+            "browserVersion": "122.0.0.0",
             "platform": "DESKTOP"
         }}
     },
     {
         "context": { "client": {
             "clientName": "WEB",
-            "clientVersion": "2.20240212.00.00",
+            "clientVersion": "2.20250115.00.00",
             "browserName": "Chrome",
+            "browserVersion": "121.0.0.0",
             "platform": "DESKTOP"
         }}
     },
     {
         "context": { "client": {
             "clientName": "WEB",
-            "clientVersion": "2.20240205.00.00",
-            "browserName": "Chrome",
+            "clientVersion": "2.20241220.00.00",
+            "browserName": "Firefox",
+            "browserVersion": "123.0",
             "platform": "DESKTOP"
         }}
     },
     {
         "context": { "client": {
             "clientName": "WEB",
-            "clientVersion": "2.20231215.00.00",
-            "browserName": "Chrome",
+            "clientVersion": "2.20241110.00.00",
+            "browserName": "Edge",
+            "browserVersion": "121.0.0.0",
             "platform": "DESKTOP"
         }}
     },
     {
         "context": { "client": {
             "clientName": "WEB",
-            "clientVersion": "2.20230812.00.00",
+            "clientVersion": "2.20241005.00.00",
             "browserName": "Chrome",
+            "browserVersion": "120.0.0.0",
             "platform": "DESKTOP"
         }}
     },
 ]
-
 _current_payload_index = 0
 
 def get_next_payload(video_id: str):
