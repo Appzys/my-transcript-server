@@ -2,6 +2,10 @@ import traceback
 import logging
 import requests
 import time
+import random
+import copy
+import re
+import xml.etree.ElementTree as ET
 from fastapi import FastAPI, Request, HTTPException
 
 logging.basicConfig(level=logging.INFO)
@@ -9,38 +13,112 @@ log = logging.getLogger("yt-rev")
 
 app = FastAPI()
 
-HEADERS = {
-    "User-Agent": "com.google.android.youtube/19.08.35 (Linux; Android 13)"
-}
-
 API_KEY = "x9J2f8S2pA9W-qZvB"
 
+# ✅ Realistic modern headers
+HEADERS = {
+    "User-Agent": "com.google.android.youtube/20.03.35 (Linux; U; Android 14; en_US; SM-S918B Build/UP1A.231005.007)",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Content-Type": "application/json"
+}
+
+# ✅ Updated realistic 2026 payload fingerprints
 PAYLOADS = [
-    {"context": {"client": {"clientName": "ANDROID", "clientVersion": "19.08.35", "androidSdkVersion": 33}}},
-    {"context": {"client": {"clientName": "ANDROID", "clientVersion": "19.06.38", "androidSdkVersion": 33}}},
-    {"context": {"client": {"clientName": "ANDROID", "clientVersion": "19.06.38", "androidSdkVersion": 32}}},
-    {"context": {"client": {"clientName": "ANDROID", "clientVersion": "19.04.36", "androidSdkVersion": 33}}},
-    {"context": {"client": {"clientName": "ANDROID", "clientVersion": "19.02.33", "androidSdkVersion": 33}}},
-    {"context": {"client": {"clientName": "WEB", "clientVersion": "2.20240101.00.00", "browserName": "Chrome", "platform": "DESKTOP"}}},
-    {"context": {"client": {"clientName": "WEB", "clientVersion": "2.20240212.00.00", "browserName": "Chrome", "platform": "DESKTOP"}}},
-    {"context": {"client": {"clientName": "WEB", "clientVersion": "2.20240205.00.00", "browserName": "Chrome", "platform": "DESKTOP"}}},
-    {"context": {"client": {"clientName": "WEB", "clientVersion": "2.20231215.00.00", "browserName": "Chrome", "platform": "DESKTOP"}}},
-    {"context": {"client": {"clientName": "WEB", "clientVersion": "2.20230812.00.00", "browserName": "Chrome", "platform": "DESKTOP"}}},
+
+    # Android Samsung
+    {
+        "context": {
+            "client": {
+                "clientName": "ANDROID",
+                "clientVersion": "20.03.35",
+                "androidSdkVersion": 34,
+                "hl": "en",
+                "gl": "US",
+                "utcOffsetMinutes": 0,
+                "deviceMake": "Samsung",
+                "deviceModel": "SM-S918B",
+                "clientScreen": "WATCH",
+                "osName": "Android",
+                "osVersion": "14"
+            }
+        }
+    },
+
+    # Android Pixel
+    {
+        "context": {
+            "client": {
+                "clientName": "ANDROID",
+                "clientVersion": "20.01.32",
+                "androidSdkVersion": 34,
+                "hl": "en",
+                "gl": "US",
+                "utcOffsetMinutes": 0,
+                "deviceMake": "Google",
+                "deviceModel": "Pixel 8",
+                "clientScreen": "WATCH",
+                "osName": "Android",
+                "osVersion": "14"
+            }
+        }
+    },
+
+    # Android TV
+    {
+        "context": {
+            "client": {
+                "clientName": "ANDROID_TV",
+                "clientVersion": "7.20250115.16.00",
+                "hl": "en",
+                "gl": "US",
+                "clientScreen": "WATCH"
+            }
+        }
+    },
+
+    # Desktop Chrome
+    {
+        "context": {
+            "client": {
+                "clientName": "WEB",
+                "clientVersion": "2.20250201.00.00",
+                "hl": "en",
+                "gl": "US",
+                "browserName": "Chrome",
+                "browserVersion": "121.0.0.0",
+                "platform": "DESKTOP",
+                "clientScreen": "WATCH"
+            }
+        }
+    },
+
+    # Mobile Chrome
+    {
+        "context": {
+            "client": {
+                "clientName": "WEB",
+                "clientVersion": "2.20250201.00.00",
+                "hl": "en",
+                "gl": "US",
+                "browserName": "Chrome",
+                "browserVersion": "121.0.0.0",
+                "platform": "MOBILE",
+                "clientScreen": "WATCH"
+            }
+        }
+    }
 ]
 
-_current_payload_index = 0
 
 def get_next_payload(video_id: str):
-    global _current_payload_index
-
-    base_payload = PAYLOADS[_current_payload_index].copy()
+    payload_template = random.choice(PAYLOADS)
+    base_payload = copy.deepcopy(payload_template)
     base_payload["videoId"] = video_id
 
     log.info("=" * 60)
-    log.info(f"🔧 USING PAYLOAD INDEX → {_current_payload_index}")
-    log.info(f"🔧 CLIENT INFO → {PAYLOADS[_current_payload_index]['context']['client']}")
+    log.info("🔀 RANDOM PAYLOAD SELECTED")
+    log.info(f"CLIENT → {payload_template['context']['client']}")
 
-    _current_payload_index = (_current_payload_index + 1) % len(PAYLOADS)
     return base_payload
 
 
@@ -61,23 +139,23 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
 
     log.info(f"🌐 WATCH_STATUS → {resp.status_code}")
     log.info(f"🌐 WATCH_TIME → {watch_time}s")
-    log.info(f"🌐 WATCH_SIZE → {len(resp.text)} bytes")
+
+    if resp.status_code != 200:
+        raise Exception(f"WATCH_PAGE_FAILED: {resp.status_code}")
 
     html = resp.text
 
-    import re
     key_match = re.search(r'"INNERTUBE_API_KEY":"(.*?)"', html)
     if not key_match:
         log.error("❌ INNERTUBE API KEY NOT FOUND")
         raise Exception("Cannot extract innertube key")
 
     api_key = key_match.group(1)
-    log.info(f"🔑 API KEY EXTRACTED → {api_key[:10]}...")
+    log.info(f"🔑 API KEY EXTRACTED")
 
     payload = get_next_payload(video_id)
 
     url = f"https://youtubei.googleapis.com/youtubei/v1/player?key={api_key}&prettyPrint=false"
-    log.info(f"📡 PLAYER URL → {url}")
 
     player_start = time.time()
     player_resp = requests.post(
@@ -87,19 +165,34 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
 
     log.info(f"📡 PLAYER_STATUS → {player_resp.status_code}")
     log.info(f"📡 PLAYER_TIME → {player_time}s")
-    log.info(f"📡 PLAYER_SIZE → {len(player_resp.text)} bytes")
+
+    if player_resp.status_code != 200:
+        raise Exception(f"PLAYER_REQUEST_FAILED: {player_resp.status_code}")
 
     player_json = player_resp.json()
-
     playability = player_json.get("playabilityStatus", {})
     log.info(f"▶ PLAYABILITY_STATUS → {playability}")
+
+    # ✅ Block detection
+    status = playability.get("status")
+
+    if status == "LOGIN_REQUIRED":
+        log.error("🚫 LOGIN REQUIRED BLOCK")
+        return {"error": "LOGIN_REQUIRED"}
+
+    if status == "UNPLAYABLE":
+        log.error("🚫 VIDEO UNPLAYABLE")
+        return {"error": "UNPLAYABLE"}
+
+    if status == "ERROR":
+        log.error("🚫 GENERAL PLAYABILITY ERROR")
+        return {"error": "PLAYABILITY_ERROR"}
 
     if "captions" not in player_json:
         log.warning("❌ CAPTIONS FIELD NOT FOUND")
         return {"error": "NO_CAPTIONS"}
 
     tracks = player_json["captions"]["playerCaptionsTracklistRenderer"]["captionTracks"]
-    log.info(f"🧾 TRACK_COUNT → {len(tracks)}")
 
     selected = None
 
@@ -108,44 +201,28 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
             (t for t in tracks if t.get("languageCode") == preferred_lang and not t.get("kind")),
             None
         )
-        log.info(f"🌍 MATCHED preferred_lang → {preferred_lang}")
 
     if selected is None:
         selected = next((t for t in tracks if not t.get("kind")), None)
-        log.info("🌍 SELECTED NON-AUTO TRACK")
 
     if selected is None:
         selected = next((t for t in tracks if t.get("kind")), None)
-        log.info("🌍 SELECTED AUTO TRACK")
 
     if selected is None and len(tracks) > 0:
         selected = tracks[0]
-        log.info("🌍 FALLBACK FIRST TRACK")
 
     if selected is None:
-        log.error("❌ NO TRACK SELECTED")
         return {"error": "NO_TRACKS"}
 
     track_url = selected["baseUrl"]
     lang = selected.get("languageCode", "unknown")
 
-    log.info("=" * 40)
-    log.info(f"🔗 CAPTION URL → {track_url}")
-    log.info(f"🌍 LANGUAGE → {lang}")
-    log.info("=" * 40)
-
     # XML FETCH
-    xml_start = time.time()
     xml_resp = requests.get(track_url, headers=HEADERS, timeout=15)
-    xml_time = round(time.time() - xml_start, 3)
 
-    log.info(f"📄 XML_STATUS → {xml_resp.status_code}")
-    log.info(f"📄 XML_TIME → {xml_time}s")
-    log.info(f"📄 XML_SIZE → {len(xml_resp.text)} bytes")
-    log.info("📄 XML_PREVIEW ↓")
-    log.info(xml_resp.text[:500])
+    if xml_resp.status_code != 200:
+        raise Exception(f"XML_FETCH_FAILED: {xml_resp.status_code}")
 
-    import xml.etree.ElementTree as ET
     root = ET.fromstring(xml_resp.text)
 
     subs = []
@@ -159,14 +236,10 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
             "lang": lang
         })
 
-    log.info(f"🧾 TEXT_FORMAT_COUNT → {len(subs)}")
-
     if len(subs) == 0:
         format_used = "srv3"
-        log.info("🔄 SWITCHING TO SRV3 FORMAT PARSE")
 
         for node in root.iter("p"):
-
             chunks = []
             for s in node.iter("s"):
                 if s.text:
@@ -182,7 +255,6 @@ def fetch_subtitles(video_id: str, preferred_lang: str | None = None):
             })
 
     log.info(f"🧾 FINAL_SUB_COUNT → {len(subs)}")
-    log.info(f"🧾 FORMAT_USED → {format_used}")
     log.info(f"⏱ TOTAL_TIME → {round(time.time() - start_total, 3)}s")
 
     return {
@@ -202,13 +274,15 @@ def transcript(video_id: str, request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     log.info(f"🎬 REQUEST RECEIVED → {video_id}")
-    
+
     try:
         result = fetch_subtitles(video_id)
+
         if result.get("success"):
             return {**result, "mode": "DIRECT"}
         else:
             return result
+
     except Exception as e:
         log.error(f"❌ ERROR OCCURRED → {str(e)}")
         log.error(traceback.format_exc())
